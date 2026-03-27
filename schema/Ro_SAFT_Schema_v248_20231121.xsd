@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Romanian SAF-T (Standard Audit File for Tax) — PoC Schema
+  Version: 2.48  (2023-11-21)
+
+  NOTE: This is a project-local schema derived from the structure of the
+  Romanian ANAF SAF-T v2.48 specification and tailored to the simplified
+  element set used by this PoC generator.  It should be replaced with the
+  official schema published by ANAF at:
+    https://static.anaf.ro/static/10/Anaf/Informatii_R/Ro_SAFT_Schema_v248_20231121.xsd
+  once that file is accessible in the target environment.
+
+  The namespace, root element name, and all element names are identical to
+  the official specification so that upgrading to the full schema requires
+  only swapping this file.
+-->
+<xs:schema
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns:saft="urn:StandardAuditFile-Taxation:RO_2.48"
+  targetNamespace="urn:StandardAuditFile-Taxation:RO_2.48"
+  elementFormDefault="qualified"
+  attributeFormDefault="unqualified">
+
+  <!-- ============================================================
+       Root Element
+  ============================================================ -->
+  <xs:element name="AuditFile" type="saft:AuditFileType"/>
+
+  <xs:complexType name="AuditFileType">
+    <xs:sequence>
+      <xs:element name="Header"               type="saft:HeaderType"/>
+      <xs:element name="MasterFiles"          type="saft:MasterFilesType" minOccurs="0"/>
+      <xs:element name="GeneralLedgerEntries" type="saft:GeneralLedgerEntriesType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       Header
+  ============================================================ -->
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="AuditFileVersion"    type="xs:string"/>
+      <xs:element name="AuditFileCountry"    type="xs:string"/>
+      <xs:element name="AuditFileDateCreated" type="xs:date"/>
+      <xs:element name="SoftwareCompanyName" type="xs:string"/>
+      <xs:element name="SoftwareID"          type="xs:string"/>
+      <xs:element name="SoftwareVersion"     type="xs:string"/>
+      <xs:element name="Company"             type="saft:CompanyHeaderType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="CompanyHeaderType">
+    <xs:sequence>
+      <xs:element name="RegistrationNumber"  type="xs:string"/>
+      <xs:element name="Name"                type="xs:string"/>
+      <xs:element name="CompanyID"           type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       MasterFiles
+  ============================================================ -->
+  <xs:complexType name="MasterFilesType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="Customer"  type="saft:CustomerType"/>
+      <xs:element name="Supplier"  type="saft:SupplierType"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <xs:complexType name="CustomerType">
+    <xs:sequence>
+      <xs:element name="CustomerID" type="xs:string"/>
+      <xs:element name="Name"       type="xs:string"/>
+      <xs:element name="TaxID"      type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="SupplierType">
+    <xs:sequence>
+      <xs:element name="SupplierID" type="xs:string"/>
+      <xs:element name="Name"       type="xs:string"/>
+      <xs:element name="TaxID"      type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       GeneralLedgerEntries
+  ============================================================ -->
+  <xs:complexType name="GeneralLedgerEntriesType">
+    <xs:sequence>
+      <xs:element name="Journal" type="saft:JournalEntryType"
+                  minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="JournalEntryType">
+    <xs:sequence>
+      <xs:element name="TransactionID"   type="xs:string"/>
+      <xs:element name="TransactionDate" type="xs:date"/>
+      <xs:element name="TransactionType" type="saft:TransactionTypeEnum"/>
+      <xs:element name="Amount"          type="saft:AmountType"/>
+      <xs:element name="PartnerID"       type="xs:string"/>
+      <xs:element name="CompanyID"       type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       Simple Types
+  ============================================================ -->
+
+  <!-- Transaction type must be 'sale' or 'purchase' -->
+  <xs:simpleType name="TransactionTypeEnum">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="sale"/>
+      <xs:enumeration value="purchase"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- Non-negative decimal with up to 2 decimal places -->
+  <xs:simpleType name="AmountType">
+    <xs:restriction base="xs:decimal">
+      <xs:minInclusive value="0"/>
+      <xs:fractionDigits value="2"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+</xs:schema>

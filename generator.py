@@ -3,6 +3,13 @@ generator.py - Synthetic SAF-T-like XML data generator.
 
 Generates realistic fake SAF-T XML files for multiple companies, injecting
 normal, risky, and fraudulent behavioral patterns.
+
+Each generated file is validated against the project XSD schema located at:
+  schema/Ro_SAFT_Schema_v248_20231121.xsd
+
+That file is a project-local schema derived from the Romanian ANAF SAF-T v2.48
+specification.  Replace it with the official ANAF XSD once accessible:
+  https://static.anaf.ro/static/10/Anaf/Informatii_R/Ro_SAFT_Schema_v248_20231121.xsd
 """
 
 import random
@@ -11,12 +18,21 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from datetime import date, timedelta
 
+try:
+    from lxml import etree as lxml_etree  # type: ignore
+    _LXML_AVAILABLE = True
+except ImportError:
+    _LXML_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 RANDOM_SEED = 42
 NUM_COMPANIES = 30
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "raw_xml")
+SCHEMA_PATH = os.path.join(
+    os.path.dirname(__file__), "schema", "Ro_SAFT_Schema_v248_20231121.xsd"
+)
 
 COMPANY_SUFFIXES = ["SRL", "SA", "SNC", "RA", "GRUP", "INDUSTRIES", "TRADING"]
 FIRST_NAMES = [
@@ -216,6 +232,46 @@ def _build_xml(company: dict, partners: list, transactions: list) -> str:
     return _prettify(root)
 
 
+def _validate_xml(xml_path: str, schema_path: str = SCHEMA_PATH) -> bool:
+    """
+    Validate an XML file against the SAF-T XSD schema using lxml.
+
+    Returns True if valid.  Prints a warning and returns False if the file
+    fails validation or if lxml is unavailable.
+    """
+    if not _LXML_AVAILABLE:
+        print(
+            "[generator] WARNING: lxml not installed — XSD validation skipped. "
+            "Run `pip install lxml` to enable schema validation."
+        )
+        return True
+
+    if not os.path.isfile(schema_path):
+        print(
+            f"[generator] WARNING: XSD schema not found at {schema_path} "
+            "— validation skipped."
+        )
+        return True
+
+    try:
+        with open(schema_path, "rb") as fh:
+            schema = lxml_etree.XMLSchema(lxml_etree.parse(fh))
+        with open(xml_path, "rb") as fh:
+            doc = lxml_etree.parse(fh)
+        if schema.validate(doc):
+            return True
+        errors = [str(e) for e in schema.error_log]
+        print(
+            f"[generator] VALIDATION FAILED: {os.path.basename(xml_path)}\n"
+            + "\n".join(f"  {e}" for e in errors)
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[generator] WARNING: Unexpected error during XSD validation of "
+              f"{os.path.basename(xml_path)}: {exc}")
+        return False
+
+
 def generate(output_dir: str = DATA_DIR, seed: int = RANDOM_SEED) -> list:
     """
     Generate synthetic SAF-T XML files for multiple companies.
@@ -262,6 +318,7 @@ def generate(output_dir: str = DATA_DIR, seed: int = RANDOM_SEED) -> list:
                       companies[28]["id"], companies[29]["id"]]
 
     # --- Generate XML per company ---
+    validation_failures: list[str] = []
     for company in companies:
         cid = company["id"]
         pattern = company["pattern"]
@@ -299,7 +356,18 @@ def generate(output_dir: str = DATA_DIR, seed: int = RANDOM_SEED) -> list:
         out_path = os.path.join(output_dir, f"{cid}.xml")
         with open(out_path, "w", encoding="utf-8") as fh:
             fh.write(xml_str)
+        if not _validate_xml(out_path):
+            validation_failures.append(cid)
 
+    if validation_failures:
+        print(
+            f"[generator] WARNING: {len(validation_failures)} file(s) failed "
+            f"XSD validation: {validation_failures}"
+        )
+    else:
+        print(
+            f"[generator] All {len(companies)} files passed XSD schema validation."
+        )
     print(f"[generator] Generated {len(companies)} XML files in {output_dir}")
     return companies
 
