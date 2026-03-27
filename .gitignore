@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated data (re-created by running main.py)
+data/raw_xml/*
+data/json/*
+data/csv/*
+data/outputs/*
+# Keep directory placeholders
+!data/raw_xml/.gitkeep
+!data/json/.gitkeep
+!data/csv/.gitkeep
+!data/outputs/.gitkeep
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pyvis generates a local lib/ directory with vis-network assets
+lib/
