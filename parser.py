@@ -17,7 +17,8 @@ RAW_XML_DIR = os.path.join(os.path.dirname(__file__), "data", "raw_xml")
 JSON_DIR = os.path.join(os.path.dirname(__file__), "data", "json")
 CSV_DIR = os.path.join(os.path.dirname(__file__), "data", "csv")
 
-NAMESPACE = "urn:StandardAuditFile-Taxation:RO_2.48"
+# Official ANAF SAF-T v2.48 namespace
+NAMESPACE = "mfp:anaf:dgti:d406t:declaratie:v1"
 NS = {"s": NAMESPACE}
 
 
@@ -27,7 +28,7 @@ def _tag(name: str) -> str:
 
 
 def _text(elem, tag: str, default: str = "") -> str:
-    """Safely extract text from a child element."""
+    """Safely extract text from a direct child element."""
     child = elem.find(_tag(tag))
     return child.text.strip() if child is not None and child.text else default
 
@@ -65,57 +66,97 @@ def parse(
             continue
 
         root = tree.getroot()
+        current_company_id = ""
 
         # --- Header / Company ---
         header = root.find(_tag("Header"))
         if header is not None:
             company_elem = header.find(_tag("Company"))
             if company_elem is not None:
-                cid = _text(company_elem, "CompanyID")
-                if cid and cid not in companies:
-                    companies[cid] = {
-                        "company_id": cid,
-                        "name": _text(company_elem, "Name"),
-                        "tax_id": _text(company_elem, "RegistrationNumber"),
-                    }
+                # RegistrationNumber stores the company["id"] (e.g. "COMP0001")
+                cid = _text(company_elem, "RegistrationNumber")
+                if cid:
+                    current_company_id = cid
+                    if cid not in companies:
+                        companies[cid] = {
+                            "company_id": cid,
+                            "name": _text(company_elem, "Name"),
+                            "tax_id": cid,
+                        }
 
         # --- MasterFiles: Customers ---
         master = root.find(_tag("MasterFiles"))
         if master is not None:
-            for cust in master.findall(_tag("Customer")):
-                pid = _text(cust, "CustomerID")
-                if pid and pid not in partners:
-                    partners[pid] = {
-                        "partner_id": pid,
-                        "name": _text(cust, "Name"),
-                        "tax_id": _text(cust, "TaxID"),
-                        "type": "customer",
-                    }
+            customers_elem = master.find(_tag("Customers"))
+            if customers_elem is not None:
+                for cust in customers_elem.findall(_tag("Customer")):
+                    pid = _text(cust, "CustomerID")
+                    if pid and pid not in partners:
+                        cs = cust.find(_tag("CompanyStructure"))
+                        if cs is not None:
+                            name = _text(cs, "Name")
+                            tax_id = _text(cs, "RegistrationNumber")
+                        else:
+                            name = pid
+                            tax_id = ""
+                        partners[pid] = {
+                            "partner_id": pid,
+                            "name": name,
+                            "tax_id": tax_id,
+                            "type": "customer",
+                        }
 
-            for sup in master.findall(_tag("Supplier")):
-                pid = _text(sup, "SupplierID")
-                if pid and pid not in partners:
-                    partners[pid] = {
-                        "partner_id": pid,
-                        "name": _text(sup, "Name"),
-                        "tax_id": _text(sup, "TaxID"),
-                        "type": "supplier",
-                    }
+            suppliers_elem = master.find(_tag("Suppliers"))
+            if suppliers_elem is not None:
+                for sup in suppliers_elem.findall(_tag("Supplier")):
+                    pid = _text(sup, "SupplierID")
+                    if pid and pid not in partners:
+                        cs = sup.find(_tag("CompanyStructure"))
+                        if cs is not None:
+                            name = _text(cs, "Name")
+                            tax_id = _text(cs, "RegistrationNumber")
+                        else:
+                            name = pid
+                            tax_id = ""
+                        partners[pid] = {
+                            "partner_id": pid,
+                            "name": name,
+                            "tax_id": tax_id,
+                            "type": "supplier",
+                        }
 
-        # --- GeneralLedgerEntries ---
+        # --- GeneralLedgerEntries → Journal → Transaction ---
         gl = root.find(_tag("GeneralLedgerEntries"))
         if gl is not None:
             for journal in gl.findall(_tag("Journal")):
-                tx = {
-                    "transaction_id": _text(journal, "TransactionID"),
-                    "company_id": _text(journal, "CompanyID"),
-                    "partner_id": _text(journal, "PartnerID"),
-                    "amount": _text(journal, "Amount"),
-                    "date": _text(journal, "TransactionDate"),
-                    "type": _text(journal, "TransactionType"),
-                }
-                if tx["transaction_id"]:
-                    transactions.append(tx)
+                for tx_elem in journal.findall(_tag("Transaction")):
+                    customer_id = _text(tx_elem, "CustomerID")
+                    supplier_id = _text(tx_elem, "SupplierID")
+                    tx_type = "sale" if customer_id else "purchase"
+                    partner_id = customer_id if customer_id else supplier_id
+
+                    # Amount from the first TransactionLine's Debit/CreditAmount
+                    amount = ""
+                    line = tx_elem.find(_tag("TransactionLine"))
+                    if line is not None:
+                        for amount_tag in ("DebitAmount", "CreditAmount"):
+                            amt_container = line.find(_tag(amount_tag))
+                            if amt_container is not None:
+                                amt_elem = amt_container.find(_tag("Amount"))
+                                if amt_elem is not None and amt_elem.text:
+                                    amount = amt_elem.text.strip()
+                                break
+
+                    tx = {
+                        "transaction_id": _text(tx_elem, "TransactionID"),
+                        "company_id": current_company_id,
+                        "partner_id": partner_id,
+                        "amount": amount,
+                        "date": _text(tx_elem, "TransactionDate"),
+                        "type": tx_type,
+                    }
+                    if tx["transaction_id"]:
+                        transactions.append(tx)
 
     # --- Write companies.json ---
     companies_path = os.path.join(json_dir, "companies.json")

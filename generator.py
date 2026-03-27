@@ -1,15 +1,10 @@
 """
-generator.py - Synthetic SAF-T-like XML data generator.
+generator.py - Synthetic SAF-T XML data generator.
 
-Generates realistic fake SAF-T XML files for multiple companies, injecting
-normal, risky, and fraudulent behavioral patterns.
-
-Each generated file is validated against the project XSD schema located at:
+Generates realistic SAF-T XML files for multiple companies, injecting normal,
+risky, and fraudulent behavioral patterns.  Each generated file is validated
+against the official Romanian ANAF SAF-T v2.48 XSD schema located at:
   schema/Ro_SAFT_Schema_v248_20231121.xsd
-
-That file is a project-local schema derived from the Romanian ANAF SAF-T v2.48
-specification.  Replace it with the official ANAF XSD once accessible:
-  https://static.anaf.ro/static/10/Anaf/Informatii_R/Ro_SAFT_Schema_v248_20231121.xsd
 """
 
 import random
@@ -34,6 +29,10 @@ SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "schema", "Ro_SAFT_Schema_v248_20231121.xsd"
 )
 
+# Official ANAF SAF-T v2.48 namespace
+SAFT_NS = "mfp:anaf:dgti:d406t:declaratie:v1"
+ET.register_namespace("", SAFT_NS)
+
 COMPANY_SUFFIXES = ["SRL", "SA", "SNC", "RA", "GRUP", "INDUSTRIES", "TRADING"]
 FIRST_NAMES = [
     "ALFA", "BETA", "GAMMA", "DELTA", "EPSILON", "SIGMA", "OMEGA",
@@ -44,6 +43,10 @@ INDUSTRIES = [
     "CONSTRUCT", "RETAIL", "AGRO", "TECH", "TRANSPORT", "IMPORT-EXPORT",
     "SERVICES", "PHARMA", "ENERGY", "MEDIA",
 ]
+
+# Fake bank code used for synthetic IBAN generation (RO format: 2+2+4+16 = 24 chars)
+_IBAN_BANK_CODE = "RNCB"
+_IBAN_ACCOUNT_PAD = 10
 
 
 def _random_date(start: date, end: date) -> date:
@@ -175,59 +178,225 @@ def _generate_transactions(
     return transactions
 
 
+def _se(parent: ET.Element, tag: str, text: str | None = None) -> ET.Element:
+    """Create a child element in the SAF-T namespace with optional text."""
+    elem = ET.SubElement(parent, f"{{{SAFT_NS}}}{tag}")
+    if text is not None:
+        elem.text = str(text)
+    return elem
+
+
+def _amount_struct(parent: ET.Element, tag: str, value: float) -> None:
+    """Append an AmountStructure child (Amount, CurrencyCode, CurrencyAmount)."""
+    container = _se(parent, tag)
+    _se(container, "Amount", f"{value:.2f}")
+    _se(container, "CurrencyCode", "RON")
+    _se(container, "CurrencyAmount", f"{value:.2f}")
+
+
 def _build_xml(company: dict, partners: list, transactions: list) -> str:
-    """Build a SAF-T-like XML string for one company."""
-    root = ET.Element("AuditFile")
-    root.set("xmlns", "urn:StandardAuditFile-Taxation:RO_2.48")
-
-    # --- Header ---
-    header = ET.SubElement(root, "Header")
-    ET.SubElement(header, "AuditFileVersion").text = "2.48"
-    ET.SubElement(header, "AuditFileCountry").text = "RO"
-    ET.SubElement(header, "AuditFileDateCreated").text = date.today().isoformat()
-    ET.SubElement(header, "SoftwareCompanyName").text = "SAF-T PoC Generator"
-    ET.SubElement(header, "SoftwareID").text = "saft-poc-v1"
-    ET.SubElement(header, "SoftwareVersion").text = "1.0"
-
-    company_elem = ET.SubElement(header, "Company")
-    ET.SubElement(company_elem, "RegistrationNumber").text = company["tax_id"]
-    name_elem = ET.SubElement(company_elem, "Name")
-    name_elem.text = company["name"]
-    ET.SubElement(company_elem, "CompanyID").text = company["id"]
-
-    # --- MasterFiles > Customers / Suppliers ---
-    master = ET.SubElement(root, "MasterFiles")
+    """
+    Build a SAF-T XML string conforming to the official ANAF v2.48 schema
+    (namespace: mfp:anaf:dgti:d406t:declaratie:v1).
+    """
     partner_map = {p["id"]: p for p in partners}
 
-    seen_customers = set()
-    seen_suppliers = set()
-    for tx in transactions:
-        if tx["type"] == "sale" and tx["partner_id"] not in seen_customers:
-            seen_customers.add(tx["partner_id"])
-            p = partner_map.get(tx["partner_id"], {})
-            cust = ET.SubElement(master, "Customer")
-            ET.SubElement(cust, "CustomerID").text = tx["partner_id"]
-            ET.SubElement(cust, "Name").text = p.get("name", tx["partner_id"])
-            ET.SubElement(cust, "TaxID").text = p.get("tax_id", "")
+    # Derive date range from transactions for SelectionCriteria
+    tx_dates = sorted(tx["date"] for tx in transactions)
+    sel_start = tx_dates[0] if tx_dates else date.today().isoformat()
+    sel_end = tx_dates[-1] if tx_dates else date.today().isoformat()
 
-        elif tx["type"] == "purchase" and tx["partner_id"] not in seen_suppliers:
-            seen_suppliers.add(tx["partner_id"])
-            p = partner_map.get(tx["partner_id"], {})
-            sup = ET.SubElement(master, "Supplier")
-            ET.SubElement(sup, "SupplierID").text = tx["partner_id"]
-            ET.SubElement(sup, "Name").text = p.get("name", tx["partner_id"])
-            ET.SubElement(sup, "TaxID").text = p.get("tax_id", "")
+    # Derive numeric index from company ID (e.g. "COMP0001" → 1)
+    try:
+        idx = int(company["id"].replace("COMP", ""))
+    except ValueError:
+        idx = 0
 
-    # --- GeneralLedgerEntries (Transactions) ---
-    gl = ET.SubElement(root, "GeneralLedgerEntries")
+    # ------------------------------------------------------------------
+    # Root
+    # ------------------------------------------------------------------
+    root = ET.Element(f"{{{SAFT_NS}}}AuditFile")
+
+    # ------------------------------------------------------------------
+    # Header
+    # ------------------------------------------------------------------
+    header = _se(root, "Header")
+    _se(header, "AuditFileVersion", "2.48")
+    _se(header, "AuditFileCountry", "RO")
+    _se(header, "AuditFileDateCreated", date.today().isoformat())
+    _se(header, "SoftwareCompanyName", "SAF-T PoC Generator")
+    _se(header, "SoftwareID", "saft-poc-v1")
+    _se(header, "SoftwareVersion", "1.0")
+
+    # Company (CompanyHeaderStructure: RegistrationNumber, Name, Address+, Contact+, BankAccount+)
+    comp_elem = _se(header, "Company")
+    _se(comp_elem, "RegistrationNumber", company["id"])       # max 35 chars
+    _se(comp_elem, "Name", company["name"][:256])
+
+    addr = _se(comp_elem, "Address")
+    _se(addr, "City", "Bucuresti")
+    _se(addr, "Country", "RO")
+    _se(addr, "AddressType", "StreetAddress")
+
+    contact = _se(comp_elem, "Contact")
+    cp = _se(contact, "ContactPerson")
+    _se(cp, "FirstName", "NotUsed")
+    _se(cp, "LastName", company["name"][:70])
+    _se(contact, "Telephone", "+40000000000")                 # max 18 chars
+
+    bank = _se(comp_elem, "BankAccount")
+    _se(bank, "IBANNumber",
+        f"RO{idx:02d}{_IBAN_BANK_CODE}000000{idx:0{_IBAN_ACCOUNT_PAD}d}")
+
+    _se(header, "DefaultCurrencyCode", "RON")
+
+    sel = _se(header, "SelectionCriteria")
+    _se(sel, "SelectionStartDate", sel_start)
+    _se(sel, "SelectionEndDate", sel_end)
+
+    _se(header, "HeaderComment", "Generated by SAF-T PoC")
+    _se(header, "SegmentIndex", "1")
+    _se(header, "TotalSegmentsInsequence", "1")
+    _se(header, "TaxAccountingBasis", "A")
+
+    # ------------------------------------------------------------------
+    # MasterFiles
+    # ------------------------------------------------------------------
+    master = _se(root, "MasterFiles")
+
+    # GeneralLedgerAccounts (required container, empty for PoC)
+    _se(master, "GeneralLedgerAccounts")
+
+    # Aggregate totals per partner for balances
+    customer_totals: dict = {}
+    supplier_totals: dict = {}
     for tx in transactions:
-        entry = ET.SubElement(gl, "Journal")
-        ET.SubElement(entry, "TransactionID").text = tx["transaction_id"]
-        ET.SubElement(entry, "TransactionDate").text = tx["date"]
-        ET.SubElement(entry, "TransactionType").text = tx["type"]
-        ET.SubElement(entry, "Amount").text = str(tx["amount"])
-        ET.SubElement(entry, "PartnerID").text = tx["partner_id"]
-        ET.SubElement(entry, "CompanyID").text = tx["company_id"]
+        pid = tx["partner_id"]
+        if tx["type"] == "sale":
+            customer_totals[pid] = round(customer_totals.get(pid, 0.0) + tx["amount"], 2)
+        else:
+            supplier_totals[pid] = round(supplier_totals.get(pid, 0.0) + tx["amount"], 2)
+
+    customers_elem = _se(master, "Customers")
+    seen_customers: set = set()
+    suppliers_elem = _se(master, "Suppliers")
+    seen_suppliers: set = set()
+
+    for tx in transactions:
+        pid = tx["partner_id"]
+        p = partner_map.get(pid, {})
+
+        if tx["type"] == "sale" and pid not in seen_customers:
+            seen_customers.add(pid)
+            cust = _se(customers_elem, "Customer")
+
+            # CompanyStructure (optional) – carries name & tax_id for parser
+            cs = _se(cust, "CompanyStructure")
+            _se(cs, "RegistrationNumber", p.get("tax_id", pid)[:35])
+            _se(cs, "Name", p.get("name", pid)[:256])
+            cs_addr = _se(cs, "Address")
+            _se(cs_addr, "City", "Bucuresti")
+            _se(cs_addr, "Country", "RO")
+
+            _se(cust, "CustomerID", pid[:35])
+            _se(cust, "AccountID", "4111")
+            _se(cust, "OpeningDebitBalance", "0.00")
+            _se(cust, "ClosingDebitBalance", f"{customer_totals.get(pid, 0.0):.2f}")
+
+        elif tx["type"] == "purchase" and pid not in seen_suppliers:
+            seen_suppliers.add(pid)
+            sup = _se(suppliers_elem, "Supplier")
+
+            cs = _se(sup, "CompanyStructure")
+            _se(cs, "RegistrationNumber", p.get("tax_id", pid)[:35])
+            _se(cs, "Name", p.get("name", pid)[:256])
+            cs_addr = _se(cs, "Address")
+            _se(cs_addr, "City", "Bucuresti")
+            _se(cs_addr, "Country", "RO")
+
+            _se(sup, "SupplierID", pid[:35])
+            _se(sup, "AccountID", "4011")
+            _se(sup, "OpeningCreditBalance", "0.00")
+            _se(sup, "ClosingCreditBalance", f"{supplier_totals.get(pid, 0.0):.2f}")
+
+    # Required empty container elements
+    _se(master, "TaxTable")
+    _se(master, "UOMTable")
+    _se(master, "AnalysisTypeTable")
+    _se(master, "MovementTypeTable")
+    _se(master, "Products")
+    _se(master, "Owners")
+    _se(master, "Assets")
+
+    # ------------------------------------------------------------------
+    # GeneralLedgerEntries
+    # ------------------------------------------------------------------
+    gl = _se(root, "GeneralLedgerEntries")
+    _se(gl, "NumberOfEntries", str(len(transactions)))
+
+    if transactions:
+        journal = _se(gl, "Journal")
+        _se(journal, "JournalID", "J01")
+        _se(journal, "Description", "Sales and Purchases Journal")
+        _se(journal, "Type", "GEN")
+
+        for tx in transactions:
+            year, month, _ = tx["date"].split("-")
+            period = str(int(month))   # strip leading zero (xs:nonNegativeInteger)
+
+            tx_elem = _se(journal, "Transaction")
+            _se(tx_elem, "TransactionID", tx["transaction_id"][:70])
+            _se(tx_elem, "Period", period)
+            _se(tx_elem, "PeriodYear", year)
+            _se(tx_elem, "TransactionDate", tx["date"])
+            _se(tx_elem, "Description", tx["type"].capitalize())
+            _se(tx_elem, "SystemEntryDate", tx["date"])
+            _se(tx_elem, "GLPostingDate", tx["date"])
+
+            # CustomerID / SupplierID: non-applicable ID left empty ("")
+            if tx["type"] == "sale":
+                _se(tx_elem, "CustomerID", tx["partner_id"][:35])
+                _se(tx_elem, "SupplierID", "")
+            else:
+                _se(tx_elem, "CustomerID", "")
+                _se(tx_elem, "SupplierID", tx["partner_id"][:35])
+
+            # TransactionLine (one per transaction)
+            line = _se(tx_elem, "TransactionLine")
+            _se(line, "RecordID", "1")
+            _se(line, "AccountID", "4111" if tx["type"] == "sale" else "4011")
+
+            if tx["type"] == "sale":
+                _se(line, "CustomerID", tx["partner_id"][:35])
+                _se(line, "SupplierID", "")
+            else:
+                _se(line, "CustomerID", "")
+                _se(line, "SupplierID", tx["partner_id"][:35])
+
+            _se(line, "Description", tx["type"].capitalize())
+
+            # DebitAmount for sales, CreditAmount for purchases
+            amt_tag = "DebitAmount" if tx["type"] == "sale" else "CreditAmount"
+            _amount_struct(line, amt_tag, tx["amount"])
+
+            # TaxInformation (required, minOccurs defaults to 1)
+            tax_info = _se(line, "TaxInformation")
+            _se(tax_info, "TaxType", "TVA")
+            _se(tax_info, "TaxCode", "TVA19")
+            tax_net = round(tx["amount"] / 1.19, 2)
+            tax_vat = round(tx["amount"] - tax_net, 2)
+            _se(tax_info, "TaxPercentage", "19")
+            _se(tax_info, "TaxBase", f"{tax_net:.2f}")
+            _amount_struct(tax_info, "TaxAmount", tax_vat)
+
+    # ------------------------------------------------------------------
+    # SourceDocuments (required container elements)
+    # ------------------------------------------------------------------
+    src_docs = _se(root, "SourceDocuments")
+    _se(src_docs, "SalesInvoices")
+    _se(src_docs, "PurchaseInvoices")
+    _se(src_docs, "Payments")
+    _se(src_docs, "MovementOfGoods")
 
     return _prettify(root)
 
