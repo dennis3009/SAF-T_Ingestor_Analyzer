@@ -1,420 +1,884 @@
 """
-visualize.py - Transaction network graph visualization.
+visualize.py - Multi-page SPA dashboard for SAF-T risk analysis.
 
-Generates a standalone interactive HTML file using the vis-network JS library
-styled with a Syncfusion-inspired Tailwind color palette.
+Generates a single standalone HTML file embedding all analysis data as an
+interactive Single-Page Application with four views: Dashboard, Company
+List / Detail, and Network Graph.
 
-Output: data/outputs/graph.html
+Uses Tailwind CSS (CDN) for styling and vis-network (CDN) for the graph.
+
+Output: data/outputs/index.html
 """
 
-import os
+import html as html_mod
 import json
+import os
 
-GRAPH_JSON = os.path.join(
-    os.path.dirname(__file__), "data", "json", "graph.json"
-)
-OUTPUT_HTML = os.path.join(
-    os.path.dirname(__file__), "data", "outputs", "graph.html"
-)
+_BASE = os.path.dirname(__file__)
+_JSON = os.path.join(_BASE, "data", "json")
 
+GRAPH_JSON = os.path.join(_JSON, "graph.json")
+SCORES_JSON = os.path.join(_JSON, "scores.json")
+PORTFOLIO_JSON = os.path.join(_JSON, "portfolio.json")
+DECISIONS_JSON = os.path.join(_JSON, "decisions.json")
+MONTHLY_JSON = os.path.join(_JSON, "monthly_metrics.json")
+CASHFLOW_JSON = os.path.join(_JSON, "cash_flow.json")
+COMPANIES_JSON = os.path.join(_JSON, "companies.json")
 
-def _node_color(risk_level: str | None, in_cycle: bool) -> dict:
-    """Return a vis-network color object based on risk level."""
-    if in_cycle:
-        return {
-            "background": "#f97316", "border": "#ea580c",
-            "highlight": {"background": "#fb923c", "border": "#f97316"},
-        }
-    palette = {
-        "Healthy": {
-            "background": "#10b981", "border": "#059669",
-            "highlight": {"background": "#34d399", "border": "#10b981"},
-        },
-        "Watch": {
-            "background": "#f59e0b", "border": "#d97706",
-            "highlight": {"background": "#fbbf24", "border": "#f59e0b"},
-        },
-        "Risky": {
-            "background": "#ef4444", "border": "#dc2626",
-            "highlight": {"background": "#f87171", "border": "#ef4444"},
-        },
-    }
-    return palette.get(risk_level or "", {
-        "background": "#94a3b8", "border": "#64748b",
-        "highlight": {"background": "#cbd5e1", "border": "#94a3b8"},
-    })
+OUTPUT_HTML = os.path.join(_BASE, "data", "outputs", "index.html")
 
 
-def _node_size(volume: float) -> int:
-    """Return vis-network node size proportional to transaction volume."""
-    return 12 + min(int(volume / 400_000), 38)
+def _load(path: str):
+    """Load a JSON file, returning an empty structure on missing file."""
+    if not os.path.isfile(path):
+        return [] if path.endswith("s.json") else {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
-def _build_html(graph: dict) -> str:
-    """Build the complete standalone HTML visualization string."""
-    nodes_list = []
-    for node in graph["nodes"]:
-        color = _node_color(node.get("risk_level"), node.get("in_cycle", False))
-        size = _node_size(node.get("volume", 0))
-        score_str = (f"Score: {node['score']}" if node.get("score") is not None
-                     else "External partner")
-        risk_str = node.get("risk_level") or "Partner"
-        cycle_badge = " ⚠ FRAUD RING" if node.get("in_cycle") else ""
-        tooltip = (
-            f"<div style='font-family:Inter,sans-serif;padding:8px;'>"
-            f"<b style='font-size:13px'>{node['label']}</b><br>"
-            f"<span style='color:#6b7280'>ID: {node['id']}</span><br>"
-            f"Type: {node.get('type','unknown')}<br>"
-            f"{score_str} | {risk_str}{cycle_badge}<br>"
-            f"Volume: {node.get('volume', 0):,.0f} RON<br>"
-            f"Out: {node.get('degree_out', 0)} &nbsp; In: {node.get('degree_in', 0)}"
-            f"</div>"
-        )
-        nodes_list.append({
-            "id": node["id"],
-            "label": node["label"][:22],
-            "title": tooltip,
-            "color": color,
-            "size": size,
-            "borderWidth": 3 if node.get("in_cycle") else 1,
-            "font": {"color": "#1e293b", "size": 11},
-            "shape": "dot" if node.get("type") == "company" else "diamond",
-        })
+def _build_html(
+    graph: dict,
+    scores: list,
+    portfolio: dict,
+    decisions: list,
+    monthly: dict,
+    cash_flow: dict,
+    companies: list,
+) -> str:
+    """Build a complete standalone SPA HTML string."""
 
-    max_weight = max((e["weight"] for e in graph["edges"]), default=1)
-    edges_list = []
-    for edge in graph["edges"]:
-        w = edge["weight"]
-        width = max(1.0, round(w / max_weight * 10, 1))
-        edges_list.append({
-            "from": edge["source"],
-            "to": edge["target"],
-            "value": width,
-            "title": f"Value: {w:,.0f} RON ({edge['count']} txs)",
-            "arrows": {"to": {"enabled": True, "scaleFactor": 0.5}},
-            "color": {"color": "#cbd5e1", "highlight": "#6366f1"},
-            "smooth": {"type": "dynamic"},
-        })
+    # Embed data safely as JS literals
+    def _js(obj):
+        return json.dumps(obj, ensure_ascii=False, default=str)
 
-    metrics = graph.get("metrics", {})
-    cycles = metrics.get("cycle_details", [])
-    cycle_nodes = set(metrics.get("cycle_node_ids", []))
+    data_block = (
+        f"const DATA_GRAPH={_js(graph)};\n"
+        f"const DATA_SCORES={_js(scores)};\n"
+        f"const DATA_PORTFOLIO={_js(portfolio)};\n"
+        f"const DATA_DECISIONS={_js(decisions)};\n"
+        f"const DATA_MONTHLY={_js(monthly)};\n"
+        f"const DATA_CASHFLOW={_js(cash_flow)};\n"
+        f"const DATA_COMPANIES={_js(companies)};\n"
+    )
 
-    # Count risk levels in a single pass over nodes
-    healthy = watch = risky = companies = num_partners = 0
-    for n in graph["nodes"]:
-        ntype = n.get("type")
-        if ntype == "company":
-            companies += 1
-            rl = n.get("risk_level")
-            if rl == "Healthy":
-                healthy += 1
-            elif rl == "Watch":
-                watch += 1
-            elif rl == "Risky":
-                risky += 1
-        elif ntype == "partner":
-            num_partners += 1
+    # Use str.replace for template markers instead of f-string for the
+    # giant HTML blob — avoids having to double every JS brace.
+    html = _HTML_TEMPLATE.replace("/* __DATA_BLOCK__ */", data_block)
+    return html
 
-    nodes_json = json.dumps(nodes_list, ensure_ascii=False)
-    edges_json = json.dumps(edges_list, ensure_ascii=False)
 
-    cycle_html = ""
-    if cycles:
-        items = "".join(
-            f'<li class="text-xs text-slate-600 py-0.5">'
-            f'<span class="font-mono">{" → ".join(c)} → {c[0]}</span></li>'
-            for c in cycles
-        )
-        cycle_html = (
-            f'<div class="bg-orange-50 border border-orange-200 rounded-lg p-3">'
-            f'<p class="text-xs font-semibold text-orange-700 mb-1">'
-            f'⚠ {len(cycles)} Fraud Ring(s) Detected</p>'
-            f'<ul class="list-none space-y-0">{items}</ul>'
-            f'</div>'
-        )
-    else:
-        cycle_html = (
-            '<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">'
-            '<p class="text-xs text-emerald-700">✓ No circular trading patterns</p>'
-            '</div>'
-        )
+# ---------------------------------------------------------------------------
+# HTML template
+# ---------------------------------------------------------------------------
+# We store the template as a plain string constant so that JavaScript's
+# curly braces do not need escaping.  The single token /* __DATA_BLOCK__ */
+# is replaced at build time with the embedded JSON variables.
+# ---------------------------------------------------------------------------
 
-    return f"""<!DOCTYPE html>
+_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SAF-T Transaction Network — ANAF Risk Analyzer</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    * {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; }}
-    #network {{ width: 100%; height: 100%; background: #f8fafc; }}
-    .vis-tooltip {{
-      background: #1e293b !important;
-      border: 1px solid #334155 !important;
-      border-radius: 8px !important;
-      color: #f1f5f9 !important;
-      padding: 0 !important;
-      font-family: 'Inter', sans-serif !important;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.3) !important;
-      max-width: 260px;
-    }}
-    .vis-tooltip b {{ color: #e2e8f0; }}
-    .vis-tooltip span {{ color: #94a3b8; }}
-    ::-webkit-scrollbar {{ width: 4px; }}
-    ::-webkit-scrollbar-track {{ background: #f1f5f9; }}
-    ::-webkit-scrollbar-thumb {{ background: #cbd5e1; border-radius: 2px; }}
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>SAF-T Risk Analyzer — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+*{font-family:'Inter',system-ui,-apple-system,sans-serif;margin:0;padding:0;box-sizing:border-box}
+body{background:#f1f5f9;color:#1e293b}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+.page{display:none}.page.active{display:block}
+.nav-tab{cursor:pointer;padding:0.5rem 1.25rem;font-size:0.875rem;font-weight:500;border-bottom:2px solid transparent;transition:all 0.15s}
+.nav-tab:hover{color:#6366f1;border-color:#c7d2fe}
+.nav-tab.active{color:#4f46e5;border-color:#4f46e5;font-weight:600}
+.kpi-card{background:#fff;border-radius:0.75rem;padding:1.25rem 1.5rem;border:1px solid #e2e8f0;transition:box-shadow 0.15s}
+.kpi-card:hover{box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+.badge{display:inline-flex;align-items:center;padding:0.125rem 0.625rem;border-radius:9999px;font-size:0.75rem;font-weight:600}
+.badge-healthy{background:#d1fae5;color:#065f46}
+.badge-watch{background:#fef3c7;color:#92400e}
+.badge-risky{background:#fee2e2;color:#991b1b}
+.badge-approve{background:#d1fae5;color:#065f46}
+.badge-review{background:#fef3c7;color:#92400e}
+.badge-reject{background:#fee2e2;color:#991b1b}
+.bar-segment{height:20px;display:inline-block;transition:width 0.4s ease}
+table.data-table{width:100%;border-collapse:separate;border-spacing:0}
+table.data-table thead th{position:sticky;top:0;background:#f8fafc;padding:0.625rem 0.75rem;text-align:left;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;border-bottom:2px solid #e2e8f0;cursor:pointer;user-select:none}
+table.data-table thead th:hover{color:#4f46e5}
+table.data-table tbody tr{cursor:pointer;transition:background 0.1s}
+table.data-table tbody tr:hover{background:#eef2ff}
+table.data-table tbody td{padding:0.625rem 0.75rem;font-size:0.8125rem;border-bottom:1px solid #f1f5f9}
+.sort-arrow{margin-left:4px;opacity:0.4;font-size:10px}
+th.sorted .sort-arrow{opacity:1;color:#4f46e5}
+#vis-network{width:100%;height:100%;background:#f8fafc}
+.vis-tooltip{background:#1e293b!important;border:1px solid #334155!important;border-radius:8px!important;color:#f1f5f9!important;padding:0!important;font-family:'Inter',sans-serif!important;box-shadow:0 10px 25px rgba(0,0,0,0.3)!important;max-width:260px}
+.gauge-ring{transition:stroke-dashoffset 0.6s ease}
+.trend-up{color:#10b981}.trend-down{color:#ef4444}.trend-flat{color:#64748b}
+.alert-danger{background:#fef2f2;border-left:4px solid #ef4444;color:#991b1b}
+.alert-warning{background:#fffbeb;border-left:4px solid #f59e0b;color:#92400e}
+.alert-info{background:#eff6ff;border-left:4px solid #3b82f6;color:#1e40af}
+.fade-in{animation:fadeIn 0.2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
 </head>
-<body class="bg-slate-100 overflow-hidden" style="height:100vh;">
-  <div class="flex h-screen">
+<body>
 
-    <!-- ==================  LEFT PANEL  ================== -->
-    <aside class="w-72 bg-white shadow-xl flex flex-col overflow-hidden border-r border-slate-200">
-
-      <!-- Header -->
-      <div class="bg-gradient-to-br from-indigo-600 to-indigo-800 px-4 py-5 flex-shrink-0">
-        <div class="flex items-center gap-2 mb-1">
-          <svg class="w-5 h-5 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-          </svg>
-          <h1 class="text-white font-bold text-base leading-tight">SAF-T Network</h1>
-        </div>
-        <p class="text-indigo-200 text-xs">ANAF Transaction Risk Analyzer</p>
+<!-- ═══════════════════  TOP NAV  ═══════════════════ -->
+<nav class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-50">
+  <div class="max-w-[1440px] mx-auto px-4 flex items-center justify-between h-14">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-indigo-800 flex items-center justify-center">
+        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
       </div>
-
-      <!-- Scrollable content -->
-      <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-
-        <!-- Stats grid -->
-        <div class="grid grid-cols-2 gap-2">
-          <div class="bg-slate-50 rounded-lg p-2.5 border border-slate-100">
-            <p class="text-2xl font-bold text-slate-800">{companies}</p>
-            <p class="text-xs text-slate-500 mt-0.5">Companies</p>
-          </div>
-          <div class="bg-slate-50 rounded-lg p-2.5 border border-slate-100">
-            <p class="text-2xl font-bold text-slate-800">{num_partners}</p>
-            <p class="text-xs text-slate-500 mt-0.5">Partners</p>
-          </div>
-          <div class="bg-slate-50 rounded-lg p-2.5 border border-slate-100">
-            <p class="text-2xl font-bold text-slate-800">{metrics.get('num_edges', 0)}</p>
-            <p class="text-xs text-slate-500 mt-0.5">Edges</p>
-          </div>
-          <div class="bg-slate-50 rounded-lg p-2.5 border border-slate-100">
-            <p class="text-2xl font-bold text-{'orange' if cycles else 'slate'}-600">{len(cycles)}</p>
-            <p class="text-xs text-slate-500 mt-0.5">Cycles</p>
-          </div>
-        </div>
-
-        <!-- Risk breakdown -->
-        <div class="bg-slate-50 rounded-lg p-3 border border-slate-100">
-          <p class="text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Risk Breakdown</p>
-          <div class="space-y-1.5">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0"></span>
-                <span class="text-xs text-slate-600">Healthy</span>
-              </div>
-              <span class="text-xs font-semibold text-slate-700 bg-emerald-100 px-1.5 py-0.5 rounded">{healthy}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-amber-500 flex-shrink-0"></span>
-                <span class="text-xs text-slate-600">Watch</span>
-              </div>
-              <span class="text-xs font-semibold text-slate-700 bg-amber-100 px-1.5 py-0.5 rounded">{watch}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0"></span>
-                <span class="text-xs text-slate-600">Risky</span>
-              </div>
-              <span class="text-xs font-semibold text-slate-700 bg-red-100 px-1.5 py-0.5 rounded">{risky}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-orange-500 flex-shrink-0"></span>
-                <span class="text-xs text-slate-600">Fraud Ring</span>
-              </div>
-              <span class="text-xs font-semibold text-slate-700 bg-orange-100 px-1.5 py-0.5 rounded">{len(cycle_nodes)}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Legend -->
-        <div class="bg-slate-50 rounded-lg p-3 border border-slate-100">
-          <p class="text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Legend</p>
-          <div class="space-y-1.5 text-xs text-slate-600">
-            <div class="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <circle cx="7" cy="7" r="6" fill="#10b981"/>
-              </svg>Healthy company
-            </div>
-            <div class="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <circle cx="7" cy="7" r="6" fill="#f59e0b"/>
-              </svg>Watch company
-            </div>
-            <div class="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <circle cx="7" cy="7" r="6" fill="#ef4444"/>
-              </svg>Risky company
-            </div>
-            <div class="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <circle cx="7" cy="7" r="6" fill="#f97316"/>
-              </svg>Fraud ring node
-            </div>
-            <div class="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <polygon points="7,1 13,13 1,13" fill="#94a3b8"/>
-              </svg>External partner ◆
-            </div>
-            <div class="flex items-center gap-2 pt-1 border-t border-slate-200">
-              <svg width="20" height="6" viewBox="0 0 20 6">
-                <line x1="0" y1="3" x2="20" y2="3" stroke="#cbd5e1" stroke-width="3"/>
-              </svg>Transaction flow (→)
-            </div>
-          </div>
-        </div>
-
-        <!-- Fraud rings summary -->
-        {cycle_html}
-
-        <!-- Node detail (populated by JS on click) -->
-        <div id="node-detail" class="hidden bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-          <p class="text-xs font-semibold text-indigo-700 mb-2">Selected Node</p>
-          <div id="node-detail-content" class="text-xs text-slate-700 space-y-1"></div>
-        </div>
-
-      </div><!-- end scrollable -->
-    </aside>
-
-    <!-- ==================  MAIN CANVAS  ================== -->
-    <main class="flex-1 relative">
-      <!-- Toolbar -->
-      <div class="absolute top-3 right-3 z-10 flex gap-2">
-        <button onclick="network.fit({{animation:true}})"
-          class="bg-white shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200
-                 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors">
-          ⊕ Fit View
-        </button>
-        <button id="physics-btn" onclick="togglePhysics()"
-          class="bg-white shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200
-                 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors">
-          ⚙ Physics: ON
-        </button>
+      <div>
+        <span class="font-bold text-sm text-slate-800">SAF-T Risk Analyzer</span>
+        <span class="text-xs text-slate-400 ml-2">ANAF Compliance Suite</span>
       </div>
-      <div id="network" class="w-full h-full"></div>
-    </main>
+    </div>
+    <div class="flex items-center gap-0" id="nav-tabs">
+      <div class="nav-tab active" data-page="dashboard">
+        <span class="mr-1">📊</span> Dashboard
+      </div>
+      <div class="nav-tab" data-page="companies">
+        <span class="mr-1">🏢</span> Companies
+      </div>
+      <div class="nav-tab" data-page="network">
+        <span class="mr-1">🔗</span> Network
+      </div>
+    </div>
+    <div class="text-xs text-slate-400">v2.0</div>
+  </div>
+</nav>
+
+<div class="max-w-[1440px] mx-auto px-4 py-5">
+
+<!-- ═══════════════════  PAGE: DASHBOARD  ═══════════════════ -->
+<div id="page-dashboard" class="page active fade-in">
+
+  <!-- KPI Row -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" id="kpi-row"></div>
+
+  <!-- Distribution Bars -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <div class="bg-white rounded-xl p-5 border border-slate-200">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Risk Distribution</h3>
+      <div id="risk-bar" class="rounded-full overflow-hidden flex h-5 mb-3"></div>
+      <div id="risk-legend" class="flex gap-4 text-xs text-slate-600"></div>
+    </div>
+    <div class="bg-white rounded-xl p-5 border border-slate-200">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Decision Distribution</h3>
+      <div id="decision-bar" class="rounded-full overflow-hidden flex h-5 mb-3"></div>
+      <div id="decision-legend" class="flex gap-4 text-xs text-slate-600"></div>
+    </div>
+    <div class="bg-white rounded-xl p-5 border border-slate-200">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Trend Distribution</h3>
+      <div id="trend-bar" class="rounded-full overflow-hidden flex h-5 mb-3"></div>
+      <div id="trend-legend" class="flex gap-4 text-xs text-slate-600"></div>
+    </div>
   </div>
 
-  <script>
-    // ── Graph data ──────────────────────────────────────────────────────
-    const nodesData = {nodes_json};
-    const edgesData = {edges_json};
+  <!-- Alerts + Top Risky -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="bg-white rounded-xl p-5 border border-slate-200">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">⚡ Alerts</h3>
+      <div id="alerts-list" class="space-y-2"></div>
+    </div>
+    <div class="bg-white rounded-xl p-5 border border-slate-200">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">🔴 Top 10 Risky Companies</h3>
+      <div id="top-risky" class="space-y-1.5"></div>
+    </div>
+  </div>
+</div>
 
-    const nodes = new vis.DataSet(nodesData);
-    const edges = new vis.DataSet(edgesData);
+<!-- ═══════════════════  PAGE: COMPANIES (LIST + DETAIL)  ═══════════════════ -->
+<div id="page-companies" class="page fade-in">
 
-    // ── vis-network options (Syncfusion Tailwind aesthetic) ─────────────
-    const options = {{
-      physics: {{
-        enabled: true,
-        barnesHut: {{
-          gravitationalConstant: -12000,
-          centralGravity: 0.3,
-          springLength: 160,
-          springConstant: 0.04,
-          damping: 0.09,
-        }},
-        stabilization: {{ iterations: 200, updateInterval: 25 }},
-      }},
-      interaction: {{
-        hover: true,
-        tooltipDelay: 150,
-        hideEdgesOnDrag: true,
-        navigationButtons: false,
-        keyboard: {{ enabled: true, speed: {{ x: 10, y: 10, zoom: 0.02 }} }},
-      }},
-      edges: {{
-        smooth: {{ type: "dynamic" }},
-        scaling: {{ min: 1, max: 10 }},
-        selectionWidth: 2,
-        hoverWidth: 1.5,
-      }},
-      nodes: {{
-        scaling: {{ min: 10, max: 50 }},
-        shadow: {{ enabled: true, color: "rgba(0,0,0,0.10)", size: 8, x: 2, y: 2 }},
-      }},
-    }};
+  <!-- LIST VIEW -->
+  <div id="company-list-view">
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+      <h2 class="text-lg font-bold text-slate-800">Company Directory</h2>
+      <div class="flex items-center gap-2">
+        <input id="company-search" type="text" placeholder="Search name or ID…"
+          class="text-sm border border-slate-300 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"/>
+        <select id="risk-filter" class="text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+          <option value="">All Risks</option>
+          <option value="Healthy">Healthy</option>
+          <option value="Watch">Watch</option>
+          <option value="Risky">Risky</option>
+        </select>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto max-h-[calc(100vh-220px)] overflow-y-auto">
+        <table class="data-table" id="companies-table">
+          <thead>
+            <tr>
+              <th data-key="name">Name <span class="sort-arrow">▲</span></th>
+              <th data-key="company_id">ID <span class="sort-arrow">▲</span></th>
+              <th data-key="score">Score <span class="sort-arrow">▲</span></th>
+              <th data-key="risk_level">Risk <span class="sort-arrow">▲</span></th>
+              <th data-key="trend">Trend <span class="sort-arrow">▲</span></th>
+              <th data-key="decision">Decision <span class="sort-arrow">▲</span></th>
+              <th data-key="recommended_credit_limit">Credit Limit <span class="sort-arrow">▲</span></th>
+            </tr>
+          </thead>
+          <tbody id="companies-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-    const container = document.getElementById("network");
-    const network = new vis.Network(container, {{ nodes, edges }}, options);
+  <!-- DETAIL VIEW -->
+  <div id="company-detail-view" class="hidden fade-in">
+    <button id="back-to-list" class="mb-4 text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
+      ← Back to Companies
+    </button>
+    <div id="company-detail-content"></div>
+  </div>
+</div>
 
-    // ── Physics toggle ──────────────────────────────────────────────────
-    let physicsOn = true;
-    function togglePhysics() {{
-      physicsOn = !physicsOn;
-      network.setOptions({{ physics: {{ enabled: physicsOn }} }});
-      document.getElementById("physics-btn").textContent =
-        physicsOn ? "⚙ Physics: ON" : "⚙ Physics: OFF";
-    }}
+<!-- ═══════════════════  PAGE: NETWORK  ═══════════════════ -->
+<div id="page-network" class="page fade-in">
+  <div class="flex gap-4" style="height:calc(100vh - 130px)">
+    <!-- Graph -->
+    <div class="flex-1 bg-white rounded-xl border border-slate-200 overflow-hidden relative">
+      <!-- Toolbar -->
+      <div class="absolute top-3 left-3 z-10 flex flex-wrap gap-2">
+        <button onclick="netFit()" class="bg-white/90 backdrop-blur shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors">⊕ Fit</button>
+        <button id="physics-btn" onclick="netTogglePhysics()" class="bg-white/90 backdrop-blur shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors">⚙ Physics: ON</button>
+        <label class="flex items-center gap-1.5 bg-white/90 backdrop-blur shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200">
+          <input type="checkbox" id="filter-risky" class="accent-indigo-600"/> Risky only
+        </label>
+        <label class="flex items-center gap-1.5 bg-white/90 backdrop-blur shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200">
+          <input type="checkbox" id="filter-high-value" class="accent-indigo-600"/> High-value edges
+        </label>
+        <label class="flex items-center gap-1.5 bg-white/90 backdrop-blur shadow text-xs text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200">
+          <input type="checkbox" id="filter-cycles" class="accent-indigo-600"/> Highlight cycles
+        </label>
+      </div>
+      <div id="vis-network" class="w-full h-full"></div>
+    </div>
+    <!-- Side panel -->
+    <aside id="net-side-panel" class="w-80 bg-white rounded-xl border border-slate-200 overflow-y-auto p-4 hidden flex-shrink-0">
+      <div id="net-panel-content"></div>
+    </aside>
+  </div>
+  <!-- Legend bar -->
+  <div class="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Healthy</span>
+    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span> Watch</span>
+    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Risky</span>
+    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-orange-500 inline-block"></span> Fraud Ring</span>
+    <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-slate-400 inline-block"></span> Partner</span>
+    <span class="text-slate-300">|</span>
+    <span>● Company &nbsp; ◆ Partner &nbsp; Edge thickness = transaction value</span>
+  </div>
+</div>
 
-    // Disable physics after initial stabilisation to keep layout stable
-    network.once("stabilizationIterationsDone", () => {{
-      network.setOptions({{ physics: {{ enabled: false }} }});
-      physicsOn = false;
-      document.getElementById("physics-btn").textContent = "⚙ Physics: OFF";
-    }});
+</div><!-- end container -->
 
-    // ── Node click: show detail panel ───────────────────────────────────
-    network.on("click", (params) => {{
-      const panel = document.getElementById("node-detail");
-      const content = document.getElementById("node-detail-content");
-      if (!params.nodes.length) {{ panel.classList.add("hidden"); return; }}
+<!-- ═══════════════════  JAVASCRIPT  ═══════════════════ -->
+<script>
+/* __DATA_BLOCK__ */
 
-      const nid = params.nodes[0];
-      const node = nodesData.find(n => n.id === nid);
-      if (!node) return;
+// ── Helpers ─────────────────────────────────────────────────────────────
+function esc(s){
+  if(s==null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmt(n){
+  if(n==null) return '—';
+  return Number(n).toLocaleString('en',{maximumFractionDigits:0});
+}
+function fmtScore(n){
+  if(n==null) return '—';
+  return Number(n).toFixed(1);
+}
+function pct(part,total){return total?((part/total)*100).toFixed(1):0;}
 
-      // Extract plain text from tooltip HTML for the side panel
-      const tmp = document.createElement("div");
-      tmp.innerHTML = node.title || "";
-      const lines = tmp.innerText.split("\\n").filter(l => l.trim());
+function badgeClass(level){
+  const m={'Healthy':'badge-healthy','Watch':'badge-watch','Risky':'badge-risky','approve':'badge-approve','review':'badge-review','reject':'badge-reject'};
+  return m[level]||'';
+}
+function trendIcon(t){
+  if(!t) return '';
+  if(t==='improving') return '<span class="trend-up font-bold">▲</span>';
+  if(t==='deteriorating') return '<span class="trend-down font-bold">▼</span>';
+  return '<span class="trend-flat font-bold">●</span>';
+}
 
-      // Escape text before inserting into innerHTML to prevent XSS
-      content.innerHTML = lines.map(l => {{
-        const escaped = l.trim()
-          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        return `<p class="leading-5">${{escaped}}</p>`;
-      }}).join("");
-      panel.classList.remove("hidden");
-      panel.scrollIntoView({{ behavior: "smooth", block: "nearest" }});
-    }});
-  </script>
+// Build lookup maps
+const companyMap={};
+DATA_COMPANIES.forEach(c=>{companyMap[c.company_id]=c;});
+const scoreMap={};
+DATA_SCORES.forEach(s=>{scoreMap[s.company_id]=s;});
+const decisionMap={};
+DATA_DECISIONS.forEach(d=>{decisionMap[d.company_id]=d;});
+
+// Merged company rows for the table
+const companyRows = DATA_COMPANIES.map(c=>{
+  const s = scoreMap[c.company_id]||{};
+  const d = decisionMap[c.company_id]||{};
+  return {
+    company_id: c.company_id,
+    name: c.name,
+    tax_id: c.tax_id,
+    score: s.score!=null?s.score:null,
+    risk_level: s.risk_level||'—',
+    trend: s.trend||d.trend||'',
+    explanation: s.explanation||[],
+    decision: d.decision||'—',
+    recommended_credit_limit: d.recommended_credit_limit!=null?d.recommended_credit_limit:null,
+    decision_explanation: d.explanation||[]
+  };
+});
+
+// ── Navigation ──────────────────────────────────────────────────────────
+let currentPage = 'dashboard';
+let networkInitialised = false;
+
+document.getElementById('nav-tabs').addEventListener('click', e=>{
+  const tab = e.target.closest('.nav-tab');
+  if(!tab) return;
+  navigateTo(tab.dataset.page);
+});
+
+function navigateTo(page){
+  currentPage = page;
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.toggle('active',t.dataset.page===page));
+  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));
+  if(page==='network' && !networkInitialised) initNetwork();
+  if(page==='companies'){
+    document.getElementById('company-list-view').classList.remove('hidden');
+    document.getElementById('company-detail-view').classList.add('hidden');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════
+(function renderDashboard(){
+  const p = DATA_PORTFOLIO;
+  const kpis = [
+    {label:'Companies',value:p.total_companies||DATA_COMPANIES.length,color:'indigo'},
+    {label:'Avg Score',value:fmtScore(p.average_score),color:'slate'},
+    {label:'Portfolio Revenue',value:fmt(p.total_portfolio_revenue),color:'emerald'},
+    {label:'Cycles Detected',value:p.cycles_detected||0,color:(p.cycles_detected?'orange':'slate')},
+  ];
+  const kpiRow = document.getElementById('kpi-row');
+  kpiRow.innerHTML = kpis.map(k=>`
+    <div class="kpi-card">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">${esc(k.label)}</p>
+      <p class="text-2xl font-extrabold text-${k.color}-600 mt-1">${esc(String(k.value))}</p>
+    </div>`).join('');
+
+  // Distribution bars helper
+  function distBar(containerId, legendId, dist, palette){
+    const bar = document.getElementById(containerId);
+    const legend = document.getElementById(legendId);
+    const total = Object.values(dist||{}).reduce((a,b)=>a+b,0)||1;
+    let barH='', legH='';
+    for(const [key,count] of Object.entries(dist||{})){
+      const w = (count/total*100).toFixed(1);
+      const col = palette[key]||'#94a3b8';
+      barH+=`<div class="bar-segment" style="width:${w}%;background:${col}" title="${esc(key)}: ${count}"></div>`;
+      legH+=`<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${col}"></span>${esc(key)} (${count})</span>`;
+    }
+    bar.innerHTML=barH; legend.innerHTML=legH;
+  }
+
+  distBar('risk-bar','risk-legend', p.risk_distribution, {Healthy:'#10b981',Watch:'#f59e0b',Risky:'#ef4444'});
+  distBar('decision-bar','decision-legend', p.decision_distribution, {approve:'#10b981',review:'#f59e0b',reject:'#ef4444'});
+  distBar('trend-bar','trend-legend', p.trend_distribution, {improving:'#10b981',stable:'#64748b',deteriorating:'#ef4444'});
+
+  // Alerts
+  const alertList = document.getElementById('alerts-list');
+  const alerts = p.alerts||[];
+  if(alerts.length){
+    alertList.innerHTML = alerts.map(a=>`
+      <div class="alert-${a.type||'info'} rounded-lg px-4 py-2.5 text-sm">${esc(a.message)}</div>
+    `).join('');
+  } else {
+    alertList.innerHTML='<p class="text-sm text-slate-400">No alerts.</p>';
+  }
+
+  // Top 10 risky
+  const topRisky = document.getElementById('top-risky');
+  const risky = p.top_10_risky||[];
+  if(risky.length){
+    topRisky.innerHTML = risky.map((r,i)=>{
+      const name = companyMap[r.company_id]?esc(companyMap[r.company_id].name):esc(r.company_id);
+      return `<div class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-red-50 cursor-pointer" onclick="showCompanyDetail('${esc(r.company_id)}')">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-400 w-5">${i+1}</span>
+          <span class="text-sm font-medium text-slate-700">${name}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold text-red-600">${fmtScore(r.score)}</span>
+          <span class="badge ${badgeClass(r.risk_level)}">${esc(r.risk_level)}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    topRisky.innerHTML='<p class="text-sm text-slate-400">No risky companies.</p>';
+  }
+})();
+
+// ══════════════════════════════════════════════════════════════════════════
+//  COMPANIES LIST
+// ══════════════════════════════════════════════════════════════════════════
+let sortKey='score', sortDir='asc';
+
+function renderCompanyTable(){
+  let rows = [...companyRows];
+  // Filter
+  const q = (document.getElementById('company-search').value||'').toLowerCase();
+  const rf = document.getElementById('risk-filter').value;
+  if(q) rows=rows.filter(r=>(r.name||'').toLowerCase().includes(q)||(r.company_id||'').toLowerCase().includes(q));
+  if(rf) rows=rows.filter(r=>r.risk_level===rf);
+  // Sort
+  rows.sort((a,b)=>{
+    let va=a[sortKey], vb=b[sortKey];
+    if(typeof va==='string') va=(va||'').toLowerCase();
+    if(typeof vb==='string') vb=(vb||'').toLowerCase();
+    if(va==null) va = sortDir==='asc'?Infinity:-Infinity;
+    if(vb==null) vb = sortDir==='asc'?Infinity:-Infinity;
+    if(va<vb) return sortDir==='asc'?-1:1;
+    if(va>vb) return sortDir==='asc'?1:-1;
+    return 0;
+  });
+  const tbody = document.getElementById('companies-tbody');
+  tbody.innerHTML = rows.map(r=>`
+    <tr onclick="showCompanyDetail('${esc(r.company_id)}')">
+      <td class="font-medium text-slate-800">${esc(r.name)}</td>
+      <td class="font-mono text-xs text-slate-500">${esc(r.company_id)}</td>
+      <td><span class="font-bold ${r.score!=null?(r.score>=70?'text-emerald-600':r.score>=40?'text-amber-600':'text-red-600'):'text-slate-400'}">${fmtScore(r.score)}</span></td>
+      <td><span class="badge ${badgeClass(r.risk_level)}">${esc(r.risk_level)}</span></td>
+      <td>${trendIcon(r.trend)} <span class="text-xs">${esc(r.trend)}</span></td>
+      <td><span class="badge ${badgeClass(r.decision)}">${esc(r.decision)}</span></td>
+      <td class="text-right font-mono">${r.recommended_credit_limit!=null?fmt(r.recommended_credit_limit):'—'}</td>
+    </tr>`).join('');
+
+  // Update sort arrows
+  document.querySelectorAll('#companies-table thead th').forEach(th=>{
+    th.classList.toggle('sorted', th.dataset.key===sortKey);
+    const arrow = th.querySelector('.sort-arrow');
+    if(arrow) arrow.textContent = (th.dataset.key===sortKey)?(sortDir==='asc'?'▲':'▼'):'▲';
+  });
+}
+
+document.querySelectorAll('#companies-table thead th').forEach(th=>{
+  th.addEventListener('click',()=>{
+    const key = th.dataset.key;
+    if(!key) return;
+    if(sortKey===key) sortDir = sortDir==='asc'?'desc':'asc';
+    else { sortKey=key; sortDir='asc'; }
+    renderCompanyTable();
+  });
+});
+document.getElementById('company-search').addEventListener('input', renderCompanyTable);
+document.getElementById('risk-filter').addEventListener('change', renderCompanyTable);
+renderCompanyTable();
+
+// ══════════════════════════════════════════════════════════════════════════
+//  COMPANY DETAIL
+// ══════════════════════════════════════════════════════════════════════════
+function showCompanyDetail(companyId){
+  navigateTo('companies');
+  document.getElementById('company-list-view').classList.add('hidden');
+  const detailView = document.getElementById('company-detail-view');
+  detailView.classList.remove('hidden');
+
+  const c = companyMap[companyId]||{};
+  const s = scoreMap[companyId]||{};
+  const d = decisionMap[companyId]||{};
+  const m = DATA_MONTHLY[companyId]||{};
+  const cf = DATA_CASHFLOW[companyId]||{};
+  const gNode = (DATA_GRAPH.nodes||[]).find(n=>n.id===companyId)||{};
+  const metrics = DATA_GRAPH.metrics||{};
+  const topPartners = (metrics.top_partners||{})[companyId]||[];
+
+  const score = s.score!=null?s.score:0;
+  const riskLevel = s.risk_level||'—';
+  const trend = s.trend||d.trend||'';
+  const explanations = s.explanation||[];
+  const decisionExplanations = d.explanation||[];
+  const monthly = m.monthly||[];
+
+  // Score gauge SVG
+  const gaugeAngle = (score/100)*251.2;  // circumference = 2*PI*40
+  const gaugeColor = score>=70?'#10b981':score>=40?'#f59e0b':'#ef4444';
+
+  // Revenue chart
+  const maxRev = Math.max(...monthly.map(r=>Math.max(r.revenue||0,r.expenses||0)),1);
+  let revenueChart = '';
+  if(monthly.length){
+    revenueChart = monthly.map(r=>{
+      const revH = ((r.revenue||0)/maxRev*100).toFixed(1);
+      const expH = ((r.expenses||0)/maxRev*100).toFixed(1);
+      return `<div class="flex flex-col items-center gap-1" style="flex:1;min-width:36px">
+        <div class="w-full flex gap-0.5 items-end" style="height:80px">
+          <div class="flex-1 rounded-t" style="height:${revH}%;background:#6366f1" title="Revenue: ${fmt(r.revenue)}"></div>
+          <div class="flex-1 rounded-t" style="height:${expH}%;background:#f59e0b" title="Expenses: ${fmt(r.expenses)}"></div>
+        </div>
+        <span class="text-[10px] text-slate-400">${esc((r.month||'').slice(5))}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Cash flow bars
+  let cashFlowChart = '';
+  const cfMonthly = cf.monthly||[];
+  if(cfMonthly.length){
+    const maxCf = Math.max(...cfMonthly.map(r=>Math.max(Math.abs(r.inflow||0),Math.abs(r.outflow||0))),1);
+    cashFlowChart = cfMonthly.map(r=>{
+      const inH = ((r.inflow||0)/maxCf*100).toFixed(1);
+      const outH = ((r.outflow||0)/maxCf*100).toFixed(1);
+      return `<div class="flex flex-col items-center gap-1" style="flex:1;min-width:36px">
+        <div class="w-full flex gap-0.5 items-end" style="height:60px">
+          <div class="flex-1 rounded-t" style="height:${inH}%;background:#10b981" title="Inflow: ${fmt(r.inflow)}"></div>
+          <div class="flex-1 rounded-t" style="height:${outH}%;background:#ef4444" title="Outflow: ${fmt(r.outflow)}"></div>
+        </div>
+        <span class="text-[10px] text-slate-400">${esc((r.month||'').slice(5))}</span>
+      </div>`;
+    }).join('');
+  }
+
+  const liqColor = {'stable':'emerald','warning':'amber','critical':'red'}[cf.liquidity_indicator]||'slate';
+
+  document.getElementById('company-detail-content').innerHTML = `
+    <!-- Header -->
+    <div class="bg-white rounded-xl border border-slate-200 p-6 mb-4">
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-slate-800">${esc(c.name||companyId)}</h2>
+          <p class="text-sm text-slate-500 font-mono">${esc(companyId)} · Tax ID: ${esc(c.tax_id||'—')}</p>
+        </div>
+        <div class="flex items-center gap-4">
+          <!-- Gauge -->
+          <div class="relative" style="width:80px;height:80px">
+            <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+              <circle cx="50" cy="50" r="40" fill="none" stroke="#e2e8f0" stroke-width="8"/>
+              <circle cx="50" cy="50" r="40" fill="none" stroke="${gaugeColor}" stroke-width="8"
+                stroke-dasharray="251.2" stroke-dashoffset="${251.2-gaugeAngle}" stroke-linecap="round" class="gauge-ring"/>
+            </svg>
+            <div class="absolute inset-0 flex items-center justify-center">
+              <span class="text-lg font-extrabold" style="color:${gaugeColor}">${fmtScore(score)}</span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="badge ${badgeClass(riskLevel)} text-sm px-3 py-1">${esc(riskLevel)}</span>
+            <span class="text-sm">${trendIcon(trend)} ${esc(trend)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <!-- Explanations -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Risk Factors</h3>
+        ${explanations.length?
+          '<ul class="space-y-1.5">'+explanations.map(e=>'<li class="text-sm text-slate-700 flex items-start gap-2"><span class="text-red-400 mt-0.5">•</span><span>'+esc(e)+'</span></li>').join('')+'</ul>'
+          :'<p class="text-sm text-slate-400">No penalties detected.</p>'}
+      </div>
+      <!-- Decision -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Credit Decision</h3>
+        <div class="flex items-center gap-3 mb-3">
+          <span class="badge ${badgeClass(d.decision||'')} text-sm px-3 py-1">${esc(d.decision||'—')}</span>
+          <span class="text-slate-500 text-sm">Limit:</span>
+          <span class="font-bold text-slate-800">${d.recommended_credit_limit!=null?fmt(d.recommended_credit_limit)+' RON':'—'}</span>
+        </div>
+        ${decisionExplanations.length?
+          '<ul class="space-y-1">'+decisionExplanations.map(e=>'<li class="text-sm text-slate-600">'+esc(e)+'</li>').join('')+'</ul>'
+          :''}
+      </div>
+    </div>
+
+    <!-- Revenue Chart -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Monthly Revenue vs Expenses</h3>
+        <div class="flex items-center gap-4 mb-3 text-xs text-slate-500">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-indigo-500 inline-block"></span> Revenue</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-500 inline-block"></span> Expenses</span>
+        </div>
+        ${revenueChart?
+          '<div class="flex gap-1 items-end">'+revenueChart+'</div>'
+          :'<p class="text-sm text-slate-400">No monthly data.</p>'}
+        <div class="mt-3 grid grid-cols-3 gap-3 text-center">
+          <div><p class="text-xs text-slate-500">Total Revenue</p><p class="font-bold text-indigo-600">${fmt(m.total_revenue)}</p></div>
+          <div><p class="text-xs text-slate-500">Total Expenses</p><p class="font-bold text-amber-600">${fmt(m.total_expenses)}</p></div>
+          <div><p class="text-xs text-slate-500">Trend</p><p class="font-medium">${trendIcon(m.revenue_trend||m.trend)} ${esc(m.revenue_trend||m.trend||'—')}</p></div>
+        </div>
+      </div>
+
+      <!-- Cash Flow Chart -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Cash Flow (Inflow vs Outflow)</h3>
+        <div class="flex items-center gap-4 mb-3 text-xs text-slate-500">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-500 inline-block"></span> Inflow</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-red-500 inline-block"></span> Outflow</span>
+        </div>
+        ${cashFlowChart?
+          '<div class="flex gap-1 items-end">'+cashFlowChart+'</div>'
+          :'<p class="text-sm text-slate-400">No cash flow data.</p>'}
+        <div class="mt-3 grid grid-cols-3 gap-3 text-center">
+          <div><p class="text-xs text-slate-500">Total Inflow</p><p class="font-bold text-emerald-600">${fmt(cf.total_inflow)}</p></div>
+          <div><p class="text-xs text-slate-500">Total Outflow</p><p class="font-bold text-red-600">${fmt(cf.total_outflow)}</p></div>
+          <div><p class="text-xs text-slate-500">Liquidity</p><p class="font-bold text-${liqColor}-600">${esc(cf.liquidity_indicator||'—')}</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top Partners -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Top Trading Partners</h3>
+      ${topPartners.length?`
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          ${topPartners.map((tp,i)=>{
+            const pNode = (DATA_GRAPH.nodes||[]).find(n=>n.id===tp.partner_id);
+            const pName = pNode?pNode.label:tp.partner_id;
+            return '<div class="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 border border-slate-100"><div class="flex items-center gap-2"><span class="text-xs font-bold text-slate-400">'+(i+1)+'</span><span class="text-sm text-slate-700">'+esc(pName)+'</span></div><span class="text-sm font-mono font-bold text-slate-600">'+fmt(tp.amount)+'</span></div>';
+          }).join('')}
+        </div>`
+        :'<p class="text-sm text-slate-400">No partner data available.</p>'}
+    </div>
+  `;
+}
+
+document.getElementById('back-to-list').addEventListener('click',()=>{
+  document.getElementById('company-detail-view').classList.add('hidden');
+  document.getElementById('company-list-view').classList.remove('hidden');
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  NETWORK GRAPH
+// ══════════════════════════════════════════════════════════════════════════
+let visNetwork = null;
+let visNodes = null;
+let visEdges = null;
+let allVisNodes = [];
+let allVisEdges = [];
+let physicsOn = true;
+
+function nodeColor(riskLevel, inCycle){
+  if(inCycle) return {background:'#f97316',border:'#ea580c',highlight:{background:'#fb923c',border:'#f97316'}};
+  const pal = {
+    Healthy:{background:'#10b981',border:'#059669',highlight:{background:'#34d399',border:'#10b981'}},
+    Watch:{background:'#f59e0b',border:'#d97706',highlight:{background:'#fbbf24',border:'#f59e0b'}},
+    Risky:{background:'#ef4444',border:'#dc2626',highlight:{background:'#f87171',border:'#ef4444'}},
+  };
+  return pal[riskLevel]||{background:'#94a3b8',border:'#64748b',highlight:{background:'#cbd5e1',border:'#94a3b8'}};
+}
+
+function buildVisData(){
+  const nodes = DATA_GRAPH.nodes||[];
+  const edges = DATA_GRAPH.edges||[];
+  const maxW = Math.max(...edges.map(e=>e.weight),1);
+  const cycleIds = new Set((DATA_GRAPH.metrics||{}).cycle_node_ids||[]);
+
+  allVisNodes = nodes.map(n=>{
+    const col = nodeColor(n.risk_level, n.in_cycle);
+    const sz = 12 + Math.min(Math.floor((n.volume||0)/400000),38);
+    const scoreStr = n.score!=null?'Score: '+n.score:'External partner';
+    const riskStr = n.risk_level||'Partner';
+    const cycleBadge = n.in_cycle?' ⚠ FRAUD RING':'';
+    return {
+      id:n.id, label:(n.label||'').substring(0,22), color:col, size:sz,
+      borderWidth:n.in_cycle?3:1, font:{color:'#1e293b',size:11},
+      shape:n.type==='company'?'dot':'diamond',
+      title:`<div style="font-family:Inter,sans-serif;padding:8px"><b style="font-size:13px">${esc(n.label)}</b><br><span style="color:#6b7280">ID: ${esc(n.id)}</span><br>Type: ${esc(n.type||'unknown')}<br>${esc(scoreStr)} | ${esc(riskStr)}${esc(cycleBadge)}<br>Volume: ${fmt(n.volume)} RON<br>Out: ${n.degree_out||0} &nbsp; In: ${n.degree_in||0}</div>`,
+      _risk:n.risk_level, _type:n.type, _inCycle:n.in_cycle, _volume:n.volume, _score:n.score
+    };
+  });
+
+  allVisEdges = edges.map(e=>{
+    const w = Math.max(1, Math.round(e.weight/maxW*10));
+    return {
+      from:e.source, to:e.target, value:w,
+      title:'Value: '+fmt(e.weight)+' RON ('+e.count+' txs)',
+      arrows:{to:{enabled:true,scaleFactor:0.5}},
+      color:{color:'#cbd5e1',highlight:'#6366f1'},
+      smooth:{type:'dynamic'},
+      _weight:e.weight, _source:e.source, _target:e.target
+    };
+  });
+}
+
+function applyFilters(){
+  if(!visNetwork) return;
+  const riskyOnly = document.getElementById('filter-risky').checked;
+  const highValue = document.getElementById('filter-high-value').checked;
+  const showCycles = document.getElementById('filter-cycles').checked;
+  const cycleIds = new Set((DATA_GRAPH.metrics||{}).cycle_node_ids||[]);
+
+  let filteredNodes = [...allVisNodes];
+  let filteredEdges = [...allVisEdges];
+
+  if(riskyOnly){
+    const riskyIds = new Set(filteredNodes.filter(n=>n._risk==='Risky'||n._risk==='Watch'||n._inCycle).map(n=>n.id));
+    // Also include nodes connected to risky ones
+    filteredEdges.forEach(e=>{
+      if(riskyIds.has(e.from)) riskyIds.add(e.to);
+      if(riskyIds.has(e.to)) riskyIds.add(e.from);
+    });
+    filteredNodes = filteredNodes.filter(n=>riskyIds.has(n.id));
+    filteredEdges = filteredEdges.filter(e=>riskyIds.has(e.from)&&riskyIds.has(e.to));
+  }
+
+  if(highValue){
+    const weights = allVisEdges.map(e=>e._weight);
+    const threshold = weights.sort((a,b)=>b-a)[Math.floor(weights.length*0.25)]||0;
+    const hvEdges = filteredEdges.filter(e=>e._weight>=threshold);
+    const hvNodeIds = new Set();
+    hvEdges.forEach(e=>{hvNodeIds.add(e.from);hvNodeIds.add(e.to);});
+    filteredNodes = filteredNodes.filter(n=>hvNodeIds.has(n.id));
+    filteredEdges = hvEdges;
+  }
+
+  if(showCycles){
+    filteredNodes = filteredNodes.map(n=>{
+      if(cycleIds.has(n.id)){
+        return {...n, borderWidth:4, color:{background:'#f97316',border:'#ea580c',highlight:{background:'#fb923c',border:'#f97316'}}};
+      }
+      return n;
+    });
+    filteredEdges = filteredEdges.map(e=>{
+      if(cycleIds.has(e.from)&&cycleIds.has(e.to)){
+        return {...e, color:{color:'#f97316',highlight:'#ea580c'}, width:3};
+      }
+      return e;
+    });
+  }
+
+  visNodes.clear();
+  visEdges.clear();
+  visNodes.add(filteredNodes);
+  visEdges.add(filteredEdges);
+}
+
+function initNetwork(){
+  buildVisData();
+  visNodes = new vis.DataSet(allVisNodes);
+  visEdges = new vis.DataSet(allVisEdges);
+
+  const container = document.getElementById('vis-network');
+  const options = {
+    physics:{enabled:true,barnesHut:{gravitationalConstant:-12000,centralGravity:0.3,springLength:160,springConstant:0.04,damping:0.09},stabilization:{iterations:200,updateInterval:25}},
+    interaction:{hover:true,tooltipDelay:150,hideEdgesOnDrag:true,keyboard:{enabled:true,speed:{x:10,y:10,zoom:0.02}}},
+    edges:{smooth:{type:'dynamic'},scaling:{min:1,max:10},selectionWidth:2,hoverWidth:1.5},
+    nodes:{scaling:{min:10,max:50},shadow:{enabled:true,color:'rgba(0,0,0,0.10)',size:8,x:2,y:2}},
+  };
+
+  visNetwork = new vis.Network(container,{nodes:visNodes,edges:visEdges},options);
+  networkInitialised = true;
+
+  visNetwork.once('stabilizationIterationsDone',()=>{
+    visNetwork.setOptions({physics:{enabled:false}});
+    physicsOn=false;
+    document.getElementById('physics-btn').textContent='⚙ Physics: OFF';
+  });
+
+  // Click handler
+  visNetwork.on('click',(params)=>{
+    const panel = document.getElementById('net-side-panel');
+    const content = document.getElementById('net-panel-content');
+    if(!params.nodes.length){panel.classList.add('hidden');return;}
+
+    const nid = params.nodes[0];
+    const gNode = (DATA_GRAPH.nodes||[]).find(n=>n.id===nid);
+    if(!gNode){panel.classList.add('hidden');return;}
+
+    panel.classList.remove('hidden');
+
+    const sc = scoreMap[nid];
+    const dc = decisionMap[nid];
+    const co = companyMap[nid];
+    const cf = DATA_CASHFLOW[nid];
+    const isCompany = gNode.type==='company';
+    const score = sc?sc.score:gNode.score;
+    const riskLevel = sc?sc.risk_level:gNode.risk_level;
+    const gaugeAngle = score!=null?(score/100*251.2):0;
+    const gaugeColor = score>=70?'#10b981':score>=40?'#f59e0b':'#ef4444';
+
+    let html = `<h3 class="font-bold text-base text-slate-800 mb-1">${esc(gNode.label)}</h3>
+      <p class="text-xs text-slate-500 font-mono mb-3">${esc(nid)} · ${esc(gNode.type)}</p>`;
+
+    if(isCompany && score!=null){
+      html += `<div class="flex items-center gap-3 mb-3">
+        <div class="relative" style="width:56px;height:56px">
+          <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="#e2e8f0" stroke-width="10"/>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="${gaugeColor}" stroke-width="10"
+              stroke-dasharray="251.2" stroke-dashoffset="${251.2-gaugeAngle}" stroke-linecap="round"/>
+          </svg>
+          <div class="absolute inset-0 flex items-center justify-center">
+            <span class="text-sm font-extrabold" style="color:${gaugeColor}">${fmtScore(score)}</span>
+          </div>
+        </div>
+        <div>
+          <span class="badge ${badgeClass(riskLevel)}">${esc(riskLevel||'')}</span>
+          ${gNode.in_cycle?'<span class="badge bg-orange-100 text-orange-700 ml-1">⚠ Fraud Ring</span>':''}
+        </div>
+      </div>`;
+    }
+
+    html += `<div class="space-y-1.5 text-xs text-slate-600 mb-3">
+      <p>Volume: <b>${fmt(gNode.volume)}</b> RON</p>
+      <p>Connections: Out ${gNode.degree_out||0} / In ${gNode.degree_in||0}</p>
+      ${cf?'<p>Liquidity: <b class="text-'+({'stable':'emerald','warning':'amber','critical':'red'}[cf.liquidity_indicator]||'slate')+'-600">'+esc(cf.liquidity_indicator||'—')+'</b></p>':''}
+      ${dc?'<p>Decision: <span class="badge '+badgeClass(dc.decision)+'">'+esc(dc.decision)+'</span></p>':''}
+    </div>`;
+
+    if(isCompany){
+      html += `<button onclick="showCompanyDetail('${esc(nid)}')" class="w-full text-center text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg py-2 transition-colors">View Full Detail →</button>`;
+    }
+
+    content.innerHTML = html;
+  });
+
+  // Filter listeners
+  document.getElementById('filter-risky').addEventListener('change', applyFilters);
+  document.getElementById('filter-high-value').addEventListener('change', applyFilters);
+  document.getElementById('filter-cycles').addEventListener('change', applyFilters);
+}
+
+function netFit(){if(visNetwork) visNetwork.fit({animation:true});}
+function netTogglePhysics(){
+  if(!visNetwork) return;
+  physicsOn=!physicsOn;
+  visNetwork.setOptions({physics:{enabled:physicsOn}});
+  document.getElementById('physics-btn').textContent=physicsOn?'⚙ Physics: ON':'⚙ Physics: OFF';
+}
+</script>
 </body>
 </html>"""
 
 
-def visualize(
-    graph_path: str = GRAPH_JSON,
-    output_html: str = OUTPUT_HTML,
-) -> None:
-    """Load graph JSON and produce a vis-network visualization."""
-    with open(graph_path, encoding="utf-8") as fh:
-        graph = json.load(fh)
+def visualize(output_html: str = OUTPUT_HTML) -> None:
+    """Load all analysis JSON files and produce a multi-page SPA dashboard."""
+    graph = _load(GRAPH_JSON)
+    scores = _load(SCORES_JSON)
+    portfolio = _load(PORTFOLIO_JSON)
+    decisions = _load(DECISIONS_JSON)
+    monthly = _load(MONTHLY_JSON)
+    cash_flow = _load(CASHFLOW_JSON)
+    companies = _load(COMPANIES_JSON)
 
     os.makedirs(os.path.dirname(output_html), exist_ok=True)
-    html = _build_html(graph)
+    html = _build_html(graph, scores, portfolio, decisions, monthly,
+                       cash_flow, companies)
     with open(output_html, "w", encoding="utf-8") as fh:
         fh.write(html)
 
-    print(f"[visualize] Interactive graph saved → {output_html}")
+    print(f"[visualize] SPA dashboard saved → {output_html}")
 
 
 if __name__ == "__main__":
