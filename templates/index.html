@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SAF-T Ingestor &amp; Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .drop-zone.dragover { border-color: #6366f1; background: #eef2ff; }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2.5px solid #e2e8f0;
+      border-top-color: #6366f1; border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .fade-in { animation: fadeIn .4s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    #graph-frame { border: none; width: 100%; height: 100%; min-height: 600px; border-radius: 0.75rem; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+  <!-- ─── TOP BAR ─── -->
+  <header class="bg-gradient-to-r from-indigo-700 to-indigo-900 shadow-lg">
+    <div class="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <svg class="w-7 h-7 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0
+               0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0
+               0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        <div>
+          <h1 class="text-white font-bold text-lg leading-tight">SAF-T Ingestor &amp; Analyzer</h1>
+          <p class="text-indigo-200 text-xs">ANAF Transaction Risk Analyzer — Proof of Concept</p>
+        </div>
+      </div>
+      <div id="xml-badge" class="bg-indigo-800/50 text-indigo-200 text-xs font-medium px-3 py-1.5 rounded-full">
+        <span id="xml-count">{{ xml_count }}</span> XML file(s) loaded
+      </div>
+    </div>
+  </header>
+
+  <div class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+    <!-- ─── ACTION CARDS ─── -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <!-- CARD 1: Generate -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-slate-800 text-sm">Generate Sample Files</h2>
+            <p class="text-xs text-slate-500">Create 30 synthetic SAF-T XML files</p>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 mb-4 flex-1">
+          Generates realistic SAF-T XML data with normal, risky, and fraudulent behavioral
+          patterns, validated against the ANAF XSD schema.
+        </p>
+        <button id="btn-generate" onclick="doGenerate()"
+          class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium
+                 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          Generate Sample Data
+        </button>
+      </div>
+
+      <!-- CARD 2: Upload ZIP -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-slate-800 text-sm">Upload XML Reports</h2>
+            <p class="text-xs text-slate-500">Import your own SAF-T data</p>
+          </div>
+        </div>
+
+        <!-- Drop zone -->
+        <div id="drop-zone"
+          class="drop-zone flex-1 flex flex-col items-center justify-center border-2 border-dashed
+                 border-slate-300 rounded-xl p-6 mb-4 cursor-pointer hover:border-indigo-400
+                 hover:bg-indigo-50/50 transition-colors text-center"
+          onclick="document.getElementById('file-input').click()">
+          <svg class="w-8 h-8 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414
+                 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-xs text-slate-500 mb-1"><b class="text-slate-700">Click to browse</b> or drag &amp; drop</p>
+          <p class="text-xs text-slate-400">ZIP file containing .xml SAF-T reports</p>
+        </div>
+        <input type="file" id="file-input" accept=".zip" class="hidden" onchange="doUpload(this.files[0])"/>
+        <div id="upload-status" class="text-xs text-slate-500 text-center hidden"></div>
+      </div>
+
+      <!-- CARD 3: Analyze -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9
+                   5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-slate-800 text-sm">Analyze Data</h2>
+            <p class="text-xs text-slate-500">Parse, score &amp; visualize</p>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 mb-4 flex-1">
+          Parses XML files, computes behavioral risk scores, builds the transaction
+          network graph, detects fraud rings, and generates an interactive visualization.
+        </p>
+        <button id="btn-analyze" onclick="doAnalyze()"
+          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium
+                 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          Analyze Data
+        </button>
+      </div>
+    </section>
+
+    <!-- ─── STATUS TOAST ─── -->
+    <div id="toast" class="hidden fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium"></div>
+
+    <!-- ─── RESULTS SECTION ─── -->
+    <section id="results" class="hidden fade-in space-y-6">
+
+      <h2 class="text-lg font-bold text-slate-800">Analysis Results</h2>
+
+      <!-- Summary Stats -->
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-slate-800" id="stat-companies">—</p>
+          <p class="text-xs text-slate-500 mt-1">Companies</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-slate-800" id="stat-partners">—</p>
+          <p class="text-xs text-slate-500 mt-1">Partners</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-slate-800" id="stat-transactions">—</p>
+          <p class="text-xs text-slate-500 mt-1">Transactions</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-emerald-600" id="stat-healthy">—</p>
+          <p class="text-xs text-slate-500 mt-1">✅ Healthy</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-amber-600" id="stat-watch">—</p>
+          <p class="text-xs text-slate-500 mt-1">⚠️ Watch</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-red-600" id="stat-risky">—</p>
+          <p class="text-xs text-slate-500 mt-1">🔴 Risky</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <p class="text-2xl font-bold text-orange-600" id="stat-cycles">—</p>
+          <p class="text-xs text-slate-500 mt-1">🔄 Fraud Rings</p>
+        </div>
+      </div>
+
+      <!-- Fraud ring details -->
+      <div id="fraud-rings-section" class="hidden">
+        <div class="bg-orange-50 border border-orange-200 rounded-xl p-4">
+          <h3 class="text-sm font-semibold text-orange-700 mb-2">⚠ Detected Fraud Rings (Circular Trading)</h3>
+          <ul id="fraud-rings-list" class="space-y-1 text-xs text-slate-700 font-mono"></ul>
+        </div>
+      </div>
+
+      <!-- Top 5 Riskiest -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-700">Top 5 Riskiest Companies</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider">
+              <tr>
+                <th class="px-5 py-2.5 text-left font-medium">#</th>
+                <th class="px-5 py-2.5 text-left font-medium">Company</th>
+                <th class="px-5 py-2.5 text-left font-medium">Score</th>
+                <th class="px-5 py-2.5 text-left font-medium">Risk Level</th>
+                <th class="px-5 py-2.5 text-left font-medium">Key Reasons</th>
+              </tr>
+            </thead>
+            <tbody id="top5-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Graph iframe -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-slate-700">Transaction Network Graph</h3>
+          <a href="/graph" target="_blank"
+            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+            Open in new tab ↗
+          </a>
+        </div>
+        <div class="h-[700px]">
+          <iframe id="graph-frame" src="about:blank"></iframe>
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- ─── JAVASCRIPT ─── -->
+  <script>
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.className = 'fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium fade-in';
+      if (type === 'success') t.classList.add('bg-emerald-600', 'text-white');
+      else if (type === 'error') t.classList.add('bg-red-600', 'text-white');
+      else t.classList.add('bg-indigo-600', 'text-white');
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 4000);
+    }
+
+    function setLoading(btnId, loading) {
+      const btn = document.getElementById(btnId);
+      if (loading) {
+        btn.disabled = true;
+        btn._origText = btn.textContent;
+        btn.innerHTML = '<span class="spinner"></span> Processing…';
+      } else {
+        btn.disabled = false;
+        btn.textContent = btn._origText || btn.textContent;
+      }
+    }
+
+    function updateXmlCount(count) {
+      document.getElementById('xml-count').textContent = count;
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // ── Generate ────────────────────────────────────────────────────────
+    async function doGenerate() {
+      setLoading('btn-generate', true);
+      try {
+        const res = await fetch('/api/generate', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(data.message, 'success');
+          updateXmlCount(data.xml_count);
+        } else {
+          showToast(data.message || 'Generation failed', 'error');
+        }
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'error');
+      }
+      setLoading('btn-generate', false);
+    }
+
+    // ── Upload ZIP ──────────────────────────────────────────────────────
+    async function doUpload(file) {
+      if (!file) return;
+      const status = document.getElementById('upload-status');
+      status.classList.remove('hidden');
+      status.textContent = `Uploading ${file.name}…`;
+
+      const form = new FormData();
+      form.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(data.message, 'success');
+          status.innerHTML = `<span class="text-emerald-600 font-medium">✓ ${escapeHtml(data.message)}</span>`;
+          updateXmlCount(data.xml_count);
+        } else {
+          showToast(data.message || 'Upload failed', 'error');
+          status.innerHTML = `<span class="text-red-600 font-medium">✗ ${escapeHtml(data.message)}</span>`;
+        }
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'error');
+        status.innerHTML = `<span class="text-red-600">✗ Error</span>`;
+      }
+      // Reset file input so user can re-upload the same file
+      document.getElementById('file-input').value = '';
+    }
+
+    // Drag-and-drop
+    const dropZone = document.getElementById('drop-zone');
+    ['dragenter', 'dragover'].forEach(ev =>
+      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
+    );
+    ['dragleave', 'drop'].forEach(ev =>
+      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('dragover'); })
+    );
+    dropZone.addEventListener('drop', e => {
+      const files = e.dataTransfer.files;
+      if (files.length) doUpload(files[0]);
+    });
+
+    // ── Analyze ─────────────────────────────────────────────────────────
+    async function doAnalyze() {
+      setLoading('btn-analyze', true);
+      try {
+        const res = await fetch('/api/analyze', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(data.message, 'success');
+          renderResults(data);
+        } else {
+          showToast(data.message || 'Analysis failed', 'error');
+        }
+      } catch (e) {
+        showToast('Network error: ' + e.message, 'error');
+      }
+      setLoading('btn-analyze', false);
+    }
+
+    // ── Render Results ──────────────────────────────────────────────────
+    function renderResults(d) {
+      // Stats
+      document.getElementById('stat-companies').textContent = d.num_companies;
+      document.getElementById('stat-partners').textContent = d.num_partners;
+      document.getElementById('stat-transactions').textContent = d.num_transactions.toLocaleString();
+      document.getElementById('stat-healthy').textContent = d.risk_healthy;
+      document.getElementById('stat-watch').textContent = d.risk_watch;
+      document.getElementById('stat-risky').textContent = d.risk_risky;
+      document.getElementById('stat-cycles').textContent = d.cycles.length;
+
+      // Fraud rings
+      const frSection = document.getElementById('fraud-rings-section');
+      if (d.cycles && d.cycles.length) {
+        frSection.classList.remove('hidden');
+        const ul = document.getElementById('fraud-rings-list');
+        ul.innerHTML = d.cycles.map((c, i) =>
+          `<li>Ring ${i + 1}: ${c.map(escapeHtml).join(' → ')} → ${escapeHtml(c[0])}</li>`
+        ).join('');
+      } else {
+        frSection.classList.add('hidden');
+      }
+
+      // Top 5
+      const tbody = document.getElementById('top5-body');
+      tbody.innerHTML = '';
+      (d.top5 || []).forEach((s, i) => {
+        const badge = s.risk_level === 'Risky'
+          ? 'bg-red-100 text-red-700'
+          : s.risk_level === 'Watch'
+            ? 'bg-amber-100 text-amber-700'
+            : 'bg-emerald-100 text-emerald-700';
+        const reasons = (s.explanation || []).slice(0, 2).map(escapeHtml).join('<br>');
+        tbody.innerHTML += `
+          <tr class="hover:bg-slate-50">
+            <td class="px-5 py-3 text-slate-500">${i + 1}</td>
+            <td class="px-5 py-3 font-medium text-slate-800">${escapeHtml(s.company_id)}</td>
+            <td class="px-5 py-3 font-mono font-semibold">${s.score.toFixed(1)}</td>
+            <td class="px-5 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${escapeHtml(s.risk_level)}</span></td>
+            <td class="px-5 py-3 text-slate-600">${reasons}</td>
+          </tr>`;
+      });
+
+      // Graph iframe — add cache-busting param
+      document.getElementById('graph-frame').src = '/graph?t=' + Date.now();
+
+      // Show results section
+      document.getElementById('results').classList.remove('hidden');
+      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  </script>
+</body>
+</html>
+
