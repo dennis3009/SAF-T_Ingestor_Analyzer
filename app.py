@@ -1,11 +1,12 @@
 """
 app.py - Flask web interface for the SAF-T Ingestor & Analyzer.
 
-Provides a single-page UI with:
-  - Generate sample SAF-T XML files
-  - Upload a ZIP of SAF-T XML reports
-  - Analyze data (parse → score → graph → visualise)
-  - View interactive network graph
+Provides a multi-page UI with:
+  - Dashboard with portfolio overview
+  - Company list with scores, trends, decisions
+  - Company detail with risk explanation
+  - Interactive network graph
+  - Generate / Upload / Analyze actions
 
 Run:
     python app.py
@@ -15,6 +16,7 @@ Then open http://127.0.0.1:5000
 import os
 import sys
 import json
+import csv
 import shutil
 import zipfile
 import threading
@@ -28,6 +30,11 @@ import generator
 import parser as saft_parser
 import scoring
 import graph_builder
+import time_series
+import cash_flow
+import decision_engine
+import risk_propagation
+import portfolio as portfolio_mod
 import visualize
 
 # ---------------------------------------------------------------------------
@@ -67,41 +74,38 @@ def _count_xml_files() -> int:
     return len([f for f in os.listdir(RAW_XML_DIR) if f.lower().endswith(".xml")])
 
 
+def _load_json_safe(filename: str) -> list | dict:
+    """Load a JSON file from the json dir, return [] or {} on failure."""
+    path = os.path.join(JSON_DIR, filename)
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _get_summary() -> dict:
     """Build a summary dict from the generated JSON outputs."""
     summary: dict = {"ok": True}
 
     # Companies
-    companies_path = os.path.join(JSON_DIR, "companies.json")
-    if os.path.exists(companies_path):
-        with open(companies_path, encoding="utf-8") as fh:
-            companies = json.load(fh)
-        summary["num_companies"] = len(companies)
-    else:
-        summary["num_companies"] = 0
+    companies = _load_json_safe("companies.json")
+    summary["num_companies"] = len(companies) if isinstance(companies, list) else 0
 
     # Partners
-    partners_path = os.path.join(JSON_DIR, "partners.json")
-    if os.path.exists(partners_path):
-        with open(partners_path, encoding="utf-8") as fh:
-            partners = json.load(fh)
-        summary["num_partners"] = len(partners)
-    else:
-        summary["num_partners"] = 0
+    partners = _load_json_safe("partners.json")
+    summary["num_partners"] = len(partners) if isinstance(partners, list) else 0
 
     # Transactions
     tx_path = os.path.join(CSV_DIR, "transactions.csv")
     if os.path.exists(tx_path):
         with open(tx_path, encoding="utf-8") as fh:
-            summary["num_transactions"] = sum(1 for _ in fh) - 1  # minus header
+            summary["num_transactions"] = sum(1 for _ in fh) - 1
     else:
         summary["num_transactions"] = 0
 
     # Scores
-    scores_path = os.path.join(JSON_DIR, "scores.json")
-    if os.path.exists(scores_path):
-        with open(scores_path, encoding="utf-8") as fh:
-            scores = json.load(fh)
+    scores = _load_json_safe("scores.json")
+    if isinstance(scores, list) and scores:
         summary["scores"] = scores
         summary["risk_healthy"] = sum(1 for s in scores if s["risk_level"] == "Healthy")
         summary["risk_watch"] = sum(1 for s in scores if s["risk_level"] == "Watch")
@@ -115,10 +119,8 @@ def _get_summary() -> dict:
         summary["top5"] = []
 
     # Graph metrics
-    graph_path = os.path.join(JSON_DIR, "graph.json")
-    if os.path.exists(graph_path):
-        with open(graph_path, encoding="utf-8") as fh:
-            graph = json.load(fh)
+    graph = _load_json_safe("graph.json")
+    if isinstance(graph, dict):
         metrics = graph.get("metrics", {})
         summary["num_edges"] = metrics.get("num_edges", 0)
         summary["cycles"] = metrics.get("cycle_details", [])
@@ -127,6 +129,20 @@ def _get_summary() -> dict:
         summary["num_edges"] = 0
         summary["cycles"] = []
         summary["cycle_node_ids"] = []
+
+    # Portfolio
+    portfolio_data = _load_json_safe("portfolio.json")
+    if isinstance(portfolio_data, dict):
+        summary["portfolio"] = portfolio_data
+    else:
+        summary["portfolio"] = {}
+
+    # Decisions
+    decisions = _load_json_safe("decisions.json")
+    if isinstance(decisions, list):
+        summary["decisions"] = decisions
+    else:
+        summary["decisions"] = []
 
     return summary
 
@@ -182,7 +198,6 @@ def api_upload():
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
-                    # Only extract .xml files, flatten directory structure
                     basename = os.path.basename(info.filename)
                     if basename.lower().endswith(".xml"):
                         data = zf.read(info.filename)
@@ -221,22 +236,37 @@ def api_analyze():
                     "message": "No XML files to analyze. Generate sample data or upload a ZIP first.",
                 }), 400
 
-            # Step 1: Parse XML → JSON / CSV
+            # Step 1: Parse XML -> JSON / CSV
             saft_parser.parse()
 
-            # Step 2: Score companies
+            # Step 2: Time-series monthly metrics
+            time_series.compute_monthly_metrics()
+
+            # Step 3: Score companies (uses time-series trends)
             scores = scoring.score_companies()
 
-            # Step 3: Build graph
+            # Step 4: Build graph
             graph = graph_builder.build_graph()
 
-            # Step 4: Apply fraud-ring cycle penalties
+            # Step 5: Apply fraud-ring cycle penalties
             cycle_node_ids = graph.get("metrics", {}).get("cycle_node_ids", [])
             if cycle_node_ids:
                 scores = scoring.apply_cycle_penalties(cycle_node_ids)
                 graph = graph_builder.build_graph()
 
-            # Step 5: Visualize
+            # Step 6: Cash flow
+            cash_flow.compute_cash_flow()
+
+            # Step 7: Decisions
+            decision_engine.compute_decisions()
+
+            # Step 8: Risk propagation
+            risk_propagation.propagate_risk()
+
+            # Step 9: Portfolio
+            portfolio_mod.compute_portfolio()
+
+            # Step 10: Visualize
             visualize.visualize()
 
             # Build summary
@@ -248,6 +278,109 @@ def api_analyze():
             import traceback
             traceback.print_exc()
             return jsonify({"ok": False, "message": str(exc)}), 500
+
+
+@app.route("/api/portfolio")
+def api_portfolio():
+    """Return portfolio data."""
+    data = _load_json_safe("portfolio.json")
+    return jsonify(data)
+
+
+@app.route("/api/companies")
+def api_companies():
+    """Return company list with scores, trends, and decisions."""
+    scores = _load_json_safe("scores.json")
+    decisions = _load_json_safe("decisions.json")
+    metrics = _load_json_safe("monthly_metrics.json")
+    cash_flows = _load_json_safe("cash_flow.json")
+
+    decision_map = {d["company_id"]: d for d in decisions} if isinstance(decisions, list) else {}
+    metrics_map = {m["company_id"]: m for m in metrics} if isinstance(metrics, list) else {}
+    cash_flow_map = {c["company_id"]: c for c in cash_flows} if isinstance(cash_flows, list) else {}
+
+    result = []
+    if isinstance(scores, list):
+        for s in scores:
+            cid = s["company_id"]
+            d = decision_map.get(cid, {})
+            m = metrics_map.get(cid, {})
+            cf = cash_flow_map.get(cid, {})
+            result.append({
+                "company_id": cid,
+                "score": s.get("score", 0),
+                "risk_level": s.get("risk_level", "Watch"),
+                "trend": s.get("trend", "stable"),
+                "explanation": s.get("explanation", []),
+                "decision": d.get("decision", "review"),
+                "recommended_credit_limit": d.get("recommended_credit_limit", 0),
+                "total_revenue": m.get("total_revenue", 0),
+                "total_expenses": m.get("total_expenses", 0),
+                "liquidity": cf.get("liquidity", "stable"),
+            })
+
+    return jsonify(result)
+
+
+@app.route("/api/company/<company_id>")
+def api_company_detail(company_id):
+    """Return detailed data for a single company."""
+    scores = _load_json_safe("scores.json")
+    decisions = _load_json_safe("decisions.json")
+    metrics = _load_json_safe("monthly_metrics.json")
+    cash_flows = _load_json_safe("cash_flow.json")
+    graph = _load_json_safe("graph.json")
+
+    score = next((s for s in scores if s["company_id"] == company_id), None)
+    decision = next((d for d in decisions if d["company_id"] == company_id), None)
+    metric = next((m for m in metrics if m["company_id"] == company_id), None)
+    cf = next((c for c in cash_flows if c["company_id"] == company_id), None)
+
+    if not score:
+        return jsonify({"error": "Company not found"}), 404
+
+    # Find top partners from graph edges
+    top_partners = []
+    if isinstance(graph, dict):
+        edges = graph.get("edges", [])
+        partner_volumes = {}
+        for e in edges:
+            if e["source"] == company_id:
+                partner_volumes[e["target"]] = partner_volumes.get(e["target"], 0) + e["weight"]
+            elif e["target"] == company_id:
+                partner_volumes[e["source"]] = partner_volumes.get(e["source"], 0) + e["weight"]
+        sorted_partners = sorted(partner_volumes.items(), key=lambda x: -x[1])[:5]
+
+        # Get partner labels from graph nodes
+        node_labels = {n["id"]: n.get("label", n["id"]) for n in graph.get("nodes", [])}
+        for pid, vol in sorted_partners:
+            top_partners.append({
+                "partner_id": pid,
+                "label": node_labels.get(pid, pid),
+                "volume": round(vol, 2),
+            })
+
+    # Find exposure data from graph node
+    exposure = {}
+    if isinstance(graph, dict):
+        node = next((n for n in graph.get("nodes", []) if n["id"] == company_id), None)
+        if node:
+            exposure = {
+                "exposure_score": node.get("exposure_score", 0),
+                "exposure_level": node.get("exposure_level", "low"),
+                "direct_exposure": node.get("direct_exposure", []),
+                "indirect_exposure": node.get("indirect_exposure", []),
+            }
+
+    return jsonify({
+        "company_id": company_id,
+        "score": score,
+        "decision": decision,
+        "metrics": metric,
+        "cash_flow": cf,
+        "top_partners": top_partners,
+        "exposure": exposure,
+    })
 
 
 @app.route("/graph")
@@ -267,9 +400,7 @@ if __name__ == "__main__":
         os.makedirs(d, exist_ok=True)
 
     print("=" * 60)
-    print("  SAF-T Ingestor & Analyzer — Web Interface")
+    print("  SAF-T Ingestor & Analyzer - Banking Demo")
     print("  Open http://127.0.0.1:5000 in your browser")
     print("=" * 60)
     app.run(debug=True, host="127.0.0.1", port=5000)
-
-

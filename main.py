@@ -1,12 +1,17 @@
 """
-main.py - Orchestration entry point for the SAF-T Ingestor & Analyzer PoC.
+main.py - Orchestration entry point for the SAF-T Ingestor & Analyzer.
 
 Steps:
   1. Generate synthetic SAF-T XML data
   2. Parse XML into JSON / CSV
-  3. Compute behavioral risk scores
-  4. Build transaction network graph
-  5. Generate interactive HTML visualisation
+  3. Compute time-series monthly metrics
+  4. Compute behavioral risk scores
+  5. Build transaction network graph
+  6. Compute cash flow approximation
+  7. Compute credit decisions
+  8. Propagate risk through network
+  9. Compute portfolio insights
+  10. Generate interactive HTML visualisation
 
 Prints a summary report to stdout.
 """
@@ -21,6 +26,11 @@ import generator
 import parser
 import scoring
 import graph_builder
+import time_series
+import cash_flow
+import decision_engine
+import risk_propagation
+import portfolio
 import visualize
 
 
@@ -35,43 +45,72 @@ def print_separator(title: str = "") -> None:
 
 
 def main() -> None:
-    print_separator("SAF-T Ingestor & Analyzer — PoC")
+    print_separator("SAF-T Ingestor & Analyzer — Banking Demo")
 
     # ------------------------------------------------------------------
     # Step 1: Generate synthetic data
     # ------------------------------------------------------------------
-    print_separator("Step 1: Generating synthetic SAF-T XML data …")
+    print_separator("Step 1: Generating synthetic SAF-T XML data")
     companies_meta = generator.generate()
 
     # ------------------------------------------------------------------
-    # Step 2: Parse XML → JSON / CSV
+    # Step 2: Parse XML -> JSON / CSV
     # ------------------------------------------------------------------
-    print_separator("Step 2: Parsing XML files …")
+    print_separator("Step 2: Parsing XML files")
     companies, partners, transactions = parser.parse()
 
     # ------------------------------------------------------------------
-    # Step 3: Compute risk scores
+    # Step 3: Compute time-series monthly metrics
     # ------------------------------------------------------------------
-    print_separator("Step 3: Computing behavioral risk scores …")
+    print_separator("Step 3: Computing time-series monthly metrics")
+    monthly_metrics = time_series.compute_monthly_metrics()
+
+    # ------------------------------------------------------------------
+    # Step 4: Compute risk scores (uses time-series trends)
+    # ------------------------------------------------------------------
+    print_separator("Step 4: Computing behavioral risk scores")
     scores = scoring.score_companies()
 
     # ------------------------------------------------------------------
-    # Step 4: Build network graph
+    # Step 5: Build network graph
     # ------------------------------------------------------------------
-    print_separator("Step 4: Building transaction network graph …")
+    print_separator("Step 5: Building transaction network graph")
     graph = graph_builder.build_graph()
 
-    # Apply fraud-ring penalties to scores and re-build graph with updated data
+    # Apply fraud-ring penalties to scores and re-build graph
     cycle_node_ids = graph.get("metrics", {}).get("cycle_node_ids", [])
     if cycle_node_ids:
         scores = scoring.apply_cycle_penalties(cycle_node_ids)
-        # Rebuild graph so node risk levels reflect updated scores
         graph = graph_builder.build_graph()
 
     # ------------------------------------------------------------------
-    # Step 5: Visualise
+    # Step 6: Cash flow approximation
     # ------------------------------------------------------------------
-    print_separator("Step 5: Generating visualisation …")
+    print_separator("Step 6: Computing cash flow approximation")
+    cash_flows = cash_flow.compute_cash_flow()
+
+    # ------------------------------------------------------------------
+    # Step 7: Credit decisions
+    # ------------------------------------------------------------------
+    print_separator("Step 7: Computing credit decisions")
+    decisions = decision_engine.compute_decisions()
+
+    # ------------------------------------------------------------------
+    # Step 8: Risk propagation through network
+    # ------------------------------------------------------------------
+    print_separator("Step 8: Propagating risk through network")
+    graph = risk_propagation.propagate_risk()
+
+    # ------------------------------------------------------------------
+    # Step 9: Portfolio insights
+    # ------------------------------------------------------------------
+    print_separator("Step 9: Computing portfolio insights")
+    portfolio_data = portfolio.compute_portfolio()
+
+    # ------------------------------------------------------------------
+    # Step 10: Visualise
+    # ------------------------------------------------------------------
+    print_separator("Step 10: Generating visualisation")
     visualize.visualize()
 
     # ------------------------------------------------------------------
@@ -87,22 +126,31 @@ def main() -> None:
 
     metrics = graph.get("metrics", {})
     cycles = metrics.get("cycle_details", [])
-    cycle_nodes = metrics.get("cycle_node_ids", [])
 
     print(f"  Companies analysed   : {num_companies}")
     print(f"  Partners detected    : {len(partners)}")
     print(f"  Total transactions   : {num_transactions}")
     print()
     print(f"  Risk breakdown:")
-    print(f"    ✅ Healthy          : {len(healthy)}")
-    print(f"    ⚠️  Watch            : {len(watch)}")
-    print(f"    🔴 Risky            : {len(risky)}")
+    print(f"    Healthy          : {len(healthy)}")
+    print(f"    Watch            : {len(watch)}")
+    print(f"    Risky            : {len(risky)}")
+    print()
+
+    # Decision breakdown
+    approve = sum(1 for d in decisions if d["decision"] == "approve")
+    review = sum(1 for d in decisions if d["decision"] == "review")
+    reject = sum(1 for d in decisions if d["decision"] == "reject")
+    print(f"  Credit decisions:")
+    print(f"    Approve          : {approve}")
+    print(f"    Review           : {review}")
+    print(f"    Reject           : {reject}")
     print()
 
     if cycles:
-        print(f"  ⚠  FRAUD RING DETECTED: {len(cycles)} cycle(s) found")
+        print(f"  FRAUD RING DETECTED: {len(cycles)} cycle(s) found")
         for i, cycle in enumerate(cycles, 1):
-            print(f"     Ring {i}: {' → '.join(cycle)} → {cycle[0]}")
+            print(f"     Ring {i}: {' -> '.join(cycle)} -> {cycle[0]}")
     else:
         print("  No circular trading patterns detected.")
 
@@ -115,15 +163,24 @@ def main() -> None:
             + "; ".join(s["explanation"][:2])
         )
 
+    # Alerts
+    alerts = portfolio_data.get("alerts", [])
+    if alerts:
+        print()
+        print(f"  Alerts ({len(alerts)}):")
+        for a in alerts:
+            icon = "!!" if a["type"] == "danger" else "!"
+            print(f"    [{icon}] {a['message']}")
+
     print()
     print("  Output files:")
-    print("    data/raw_xml/       — synthetic SAF-T XML files")
-    print("    data/json/companies.json")
-    print("    data/json/partners.json")
-    print("    data/json/scores.json")
-    print("    data/json/graph.json")
-    print("    data/csv/transactions.csv")
-    print("    data/outputs/graph.html  ← open in browser!")
+    print("    data/json/monthly_metrics.json  - time-series data")
+    print("    data/json/scores.json           - risk scores")
+    print("    data/json/cash_flow.json        - cash flow analysis")
+    print("    data/json/decisions.json         - credit decisions")
+    print("    data/json/portfolio.json         - portfolio overview")
+    print("    data/json/graph.json            - network graph + exposure")
+    print("    data/outputs/graph.html         - open in browser!")
     print_separator()
 
 
