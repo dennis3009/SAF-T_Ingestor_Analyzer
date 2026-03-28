@@ -775,8 +775,7 @@
 
     tbody.innerHTML = rows.map(c => `
       <tr class="hover:bg-indigo-50/50 cursor-pointer transition" tabindex="0"
-          onclick="showCompanyDetail('${escapeHtml(c.company_id)}')"
-          onkeydown="if(event.key==='Enter')showCompanyDetail('${escapeHtml(c.company_id)}')">
+          data-company-id="${escapeHtml(c.company_id)}">
         <td class="py-3 px-3 font-medium text-indigo-700">${escapeHtml(c.company_id)}</td>
         <td class="py-3 px-3">${fmtScore(c.score)}</td>
         <td class="py-3 px-3">${riskBadge(c.risk_level)}</td>
@@ -785,6 +784,13 @@
         <td class="py-3 px-3 text-right font-mono">${fmtCurrency(c.recommended_credit_limit)}</td>
       </tr>
     `).join('');
+
+    // Attach click/keydown handlers via event delegation
+    tbody.querySelectorAll('tr[data-company-id]').forEach(tr => {
+      const cid = tr.dataset.companyId;
+      tr.addEventListener('click', () => showCompanyDetail(cid));
+      tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') showCompanyDetail(cid); });
+    });
 
     // Update sort arrows
     document.querySelectorAll('th.sortable .sort-arrow').forEach(el => el.textContent = '');

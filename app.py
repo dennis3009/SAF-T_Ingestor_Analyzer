@@ -201,7 +201,10 @@ def api_upload():
                     basename = os.path.basename(info.filename)
                     if basename.lower().endswith(".xml"):
                         data = zf.read(info.filename)
-                        target = os.path.join(RAW_XML_DIR, basename)
+                        target = os.path.normpath(os.path.join(RAW_XML_DIR, basename))
+                        # Prevent path traversal
+                        if not target.startswith(os.path.normpath(RAW_XML_DIR)):
+                            continue
                         with open(target, "wb") as fh:
                             fh.write(data)
                         extracted += 1

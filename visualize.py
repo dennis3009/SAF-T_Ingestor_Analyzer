@@ -27,7 +27,7 @@ OUTPUT_HTML = os.path.join(
 )
 
 
-def _node_color(risk_level, in_cycle):
+def _node_color(risk_level: str | None, in_cycle: bool) -> dict:
     """Return a vis-network color object based on risk level."""
     if in_cycle:
         return {
@@ -54,12 +54,12 @@ def _node_color(risk_level, in_cycle):
     })
 
 
-def _node_size(volume):
+def _node_size(volume: float) -> int:
     """Return vis-network node size proportional to transaction volume."""
     return 12 + min(int(volume / 400_000), 38)
 
 
-def _build_html(graph, scores_map, decisions_map, metrics_map):
+def _build_html(graph: dict, scores_map: dict, decisions_map: dict, metrics_map: dict) -> str:
     """Build the complete standalone HTML visualization string."""
     nodes_list = []
     for node in graph["nodes"]:
@@ -540,12 +540,12 @@ def _build_html(graph, scores_map, decisions_map, metrics_map):
 
 
 def visualize(
-    graph_path=GRAPH_JSON,
-    scores_path=SCORES_JSON,
-    decisions_path=DECISIONS_JSON,
-    metrics_path=MONTHLY_METRICS_JSON,
-    output_html=OUTPUT_HTML,
-):
+    graph_path: str = GRAPH_JSON,
+    scores_path: str = SCORES_JSON,
+    decisions_path: str = DECISIONS_JSON,
+    metrics_path: str = MONTHLY_METRICS_JSON,
+    output_html: str = OUTPUT_HTML,
+) -> None:
     """Load data and produce an enhanced vis-network visualization."""
     with open(graph_path, encoding="utf-8") as fh:
         graph = json.load(fh)
