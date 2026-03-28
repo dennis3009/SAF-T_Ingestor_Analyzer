@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SAF-T Banking Demo</title>
+  <title>SAF-T Banking Risk Analysis Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -562,9 +562,9 @@
   }
   function fmtCurrency(n) {
     if (n === null || n === undefined || isNaN(n)) return '—';
-    if (Math.abs(n) >= 1e6) return '€' + (n / 1e6).toFixed(1) + 'M';
-    if (Math.abs(n) >= 1e3) return '€' + (n / 1e3).toFixed(1) + 'K';
-    return '€' + Number(n).toFixed(0);
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M RON';
+    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K RON';
+    return Number(n).toFixed(0) + ' RON';
   }
 
   /* Badge HTML builders */
@@ -774,7 +774,9 @@
     }
 
     tbody.innerHTML = rows.map(c => `
-      <tr class="hover:bg-indigo-50/50 cursor-pointer transition" onclick="showCompanyDetail('${escapeHtml(c.company_id)}')">
+      <tr class="hover:bg-indigo-50/50 cursor-pointer transition" tabindex="0"
+          onclick="showCompanyDetail('${escapeHtml(c.company_id)}')"
+          onkeydown="if(event.key==='Enter')showCompanyDetail('${escapeHtml(c.company_id)}')">
         <td class="py-3 px-3 font-medium text-indigo-700">${escapeHtml(c.company_id)}</td>
         <td class="py-3 px-3">${fmtScore(c.score)}</td>
         <td class="py-3 px-3">${riskBadge(c.risk_level)}</td>
@@ -846,7 +848,7 @@
     const cashFlow = c.cash_flow;
 
     // Find max revenue for bar chart scaling
-    const maxRev = Math.max(...months.map(m => Math.abs(m.revenue || 0)), 1);
+    const maxRev = months.reduce((max, m) => Math.max(max, Math.abs(m.revenue || 0)), 0) || 1;
 
     let html = '';
 
@@ -929,7 +931,7 @@
 
     /* ── Expenses & net flow chart ── */
     if (months.length > 0) {
-      const maxNet = Math.max(...months.map(m => Math.abs(m.net_flow || 0)), 1);
+      const maxNet = months.reduce((max, m) => Math.max(max, Math.abs(m.net_flow || 0)), 0) || 1;
       html += `
       <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
         <h3 class="font-semibold text-slate-700">Monthly Net Cash Flow</h3>
