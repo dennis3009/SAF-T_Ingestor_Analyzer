@@ -3,385 +3,1024 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SAF-T Ingestor &amp; Analyzer</title>
+  <title>SAF-T Banking Demo</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-    .drop-zone.dragover { border-color: #6366f1; background: #eef2ff; }
-    .spinner { display: inline-block; width: 18px; height: 18px; border: 2.5px solid #e2e8f0;
-      border-top-color: #6366f1; border-radius: 50%; animation: spin .6s linear infinite; }
+    * { font-family: 'Inter', sans-serif; }
+    /* Smooth tab transitions */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    /* Toast slide-in */
+    .toast-enter { animation: slideIn .3s ease-out; }
+    @keyframes slideIn { from { transform: translateY(-1rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    /* Spinner */
+    .spinner { border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%;
+               width: 1rem; height: 1rem; animation: spin .6s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .fade-in { animation: fadeIn .4s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-    #graph-frame { border: none; width: 100%; height: 100%; min-height: 600px; border-radius: 0.75rem; }
+    /* Drag-drop highlight */
+    .drop-active { border-color: #6366f1 !important; background: #eef2ff !important; }
+    /* Sortable header cursor */
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: #f1f5f9; }
+    /* Bar chart transition */
+    .bar-fill { transition: width .4s ease; }
   </style>
 </head>
-<body class="bg-slate-100 min-h-screen">
+<body class="bg-slate-50 text-slate-800 min-h-screen">
 
-  <!-- ─── TOP BAR ─── -->
-  <header class="bg-gradient-to-r from-indigo-700 to-indigo-900 shadow-lg">
-    <div class="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <svg class="w-7 h-7 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0
-               0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0
-               0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-        </svg>
-        <div>
-          <h1 class="text-white font-bold text-lg leading-tight">SAF-T Ingestor &amp; Analyzer</h1>
-          <p class="text-indigo-200 text-xs">ANAF Transaction Risk Analyzer — Proof of Concept</p>
+  <!-- ════════════════════════════════════════════════════════════════
+       TOAST NOTIFICATIONS
+       ════════════════════════════════════════════════════════════════ -->
+  <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       HEADER BAR
+       ════════════════════════════════════════════════════════════════ -->
+  <header class="bg-gradient-to-r from-indigo-700 via-indigo-600 to-indigo-500 text-white shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <!-- Top row: title + XML counter -->
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center gap-3">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002
+                     5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>
+          </svg>
+          <h1 class="text-xl font-bold tracking-tight">SAF-T Banking Demo</h1>
         </div>
+        <span id="xmlBadge"
+              class="inline-flex items-center gap-1.5 bg-indigo-800/60 text-indigo-100 text-sm font-medium px-3 py-1 rounded-full">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414
+                     5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <span id="xmlCount">{{ xml_count }}</span> XML files
+        </span>
       </div>
-      <div id="xml-badge" class="bg-indigo-800/50 text-indigo-200 text-xs font-medium px-3 py-1.5 rounded-full">
-        <span id="xml-count">{{ xml_count }}</span> XML file(s) loaded
-      </div>
+      <!-- Navigation tabs -->
+      <nav class="flex gap-1 -mb-px" id="navTabs">
+        <button onclick="showTab('dashboard')" data-tab="dashboard"
+                class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition
+                       text-indigo-100 hover:bg-indigo-500/40 border-b-2 border-transparent">
+          Dashboard
+        </button>
+        <button onclick="showTab('companies')" data-tab="companies"
+                class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition
+                       text-indigo-100 hover:bg-indigo-500/40 border-b-2 border-transparent">
+          Companies
+        </button>
+        <button onclick="showTab('detail')" data-tab="detail" id="detailTab"
+                class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition
+                       text-indigo-100 hover:bg-indigo-500/40 border-b-2 border-transparent hidden">
+          Company Detail
+        </button>
+        <button onclick="showTab('graph')" data-tab="graph"
+                class="tab-btn px-4 py-2 text-sm font-medium rounded-t-lg transition
+                       text-indigo-100 hover:bg-indigo-500/40 border-b-2 border-transparent">
+          Network Graph
+        </button>
+      </nav>
     </div>
   </header>
 
-  <div class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+  <!-- ════════════════════════════════════════════════════════════════
+       MAIN CONTENT
+       ════════════════════════════════════════════════════════════════ -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
-    <!-- ─── ACTION CARDS ─── -->
-    <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-      <!-- CARD 1: Generate -->
-      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-            </svg>
-          </div>
-          <div>
-            <h2 class="font-semibold text-slate-800 text-sm">Generate Sample Files</h2>
-            <p class="text-xs text-slate-500">Create 30 synthetic SAF-T XML files</p>
-          </div>
+    <!-- ──────────────────────────────────────────────
+         ACTIONS SECTION (always visible)
+         ────────────────────────────────────────────── -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Generate -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col gap-3">
+        <div class="flex items-center gap-2 text-emerald-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5
+                     7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625
+                     c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75
+                     c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+          </svg>
+          <h3 class="font-semibold">Generate Sample Files</h3>
         </div>
-        <p class="text-xs text-slate-500 mb-4 flex-1">
-          Generates realistic SAF-T XML data with normal, risky, and fraudulent behavioral
-          patterns, validated against the ANAF XSD schema.
-        </p>
-        <button id="btn-generate" onclick="doGenerate()"
-          class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium
-                 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-          Generate Sample Data
+        <p class="text-sm text-slate-500">Create synthetic SAF-T XML data for testing the analysis pipeline.</p>
+        <button id="btnGenerate" onclick="doGenerate()"
+                class="mt-auto w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium
+                       py-2 px-4 rounded-xl transition flex items-center justify-center gap-2">
+          Generate
         </button>
       </div>
 
-      <!-- CARD 2: Upload ZIP -->
-      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
-            <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-            </svg>
-          </div>
-          <div>
-            <h2 class="font-semibold text-slate-800 text-sm">Upload XML Reports</h2>
-            <p class="text-xs text-slate-500">Import your own SAF-T data</p>
-          </div>
-        </div>
-
-        <!-- Drop zone -->
-        <div id="drop-zone"
-          class="drop-zone flex-1 flex flex-col items-center justify-center border-2 border-dashed
-                 border-slate-300 rounded-xl p-6 mb-4 cursor-pointer hover:border-indigo-400
-                 hover:bg-indigo-50/50 transition-colors text-center"
-          onclick="document.getElementById('file-input').click()">
-          <svg class="w-8 h-8 text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414
-                 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      <!-- Upload -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col gap-3">
+        <div class="flex items-center gap-2 text-indigo-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12
+                     3m0 0l4.5 4.5M12 3v13.5"/>
           </svg>
-          <p class="text-xs text-slate-500 mb-1"><b class="text-slate-700">Click to browse</b> or drag &amp; drop</p>
-          <p class="text-xs text-slate-400">ZIP file containing .xml SAF-T reports</p>
+          <h3 class="font-semibold">Upload XML Reports</h3>
         </div>
-        <input type="file" id="file-input" accept=".zip" class="hidden" onchange="doUpload(this.files[0])"/>
-        <div id="upload-status" class="text-xs text-slate-500 text-center hidden"></div>
+        <div id="dropZone"
+             class="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center text-sm
+                    text-slate-400 transition cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50">
+          <p>Drag &amp; drop a ZIP file here</p>
+          <p class="text-xs mt-1">or click to browse</p>
+          <input type="file" id="fileInput" accept=".zip" class="hidden"/>
+        </div>
+        <button id="btnUpload" onclick="document.getElementById('fileInput').click()"
+                class="mt-auto w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium
+                       py-2 px-4 rounded-xl transition flex items-center justify-center gap-2">
+          Browse ZIP
+        </button>
       </div>
 
-      <!-- CARD 3: Analyze -->
-      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9
-                   5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
-            </svg>
-          </div>
-          <div>
-            <h2 class="font-semibold text-slate-800 text-sm">Analyze Data</h2>
-            <p class="text-xs text-slate-500">Parse, score &amp; visualize</p>
-          </div>
+      <!-- Analyze -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col gap-3">
+        <div class="flex items-center gap-2 text-amber-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082
+                     m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8
+                     14.5M14.25 3.104c.251.023.501.05.75.082M19.8 14.5a2.25 2.25 0 010
+                     3l-3.3 3.3a2.25 2.25 0 01-3 0L10.2 17.5a2.25 2.25 0 010-3"/>
+          </svg>
+          <h3 class="font-semibold">Analyze Data</h3>
         </div>
-        <p class="text-xs text-slate-500 mb-4 flex-1">
-          Parses XML files, computes behavioral risk scores, builds the transaction
-          network graph, detects fraud rings, and generates an interactive visualization.
-        </p>
-        <button id="btn-analyze" onclick="doAnalyze()"
-          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium
-                 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-          Analyze Data
+        <p class="text-sm text-slate-500">Run the full pipeline: scoring, graph, risk propagation, decisions &amp; portfolio.</p>
+        <button id="btnAnalyze" onclick="doAnalyze()"
+                class="mt-auto w-full bg-amber-500 hover:bg-amber-600 text-white font-medium
+                       py-2 px-4 rounded-xl transition flex items-center justify-center gap-2">
+          Analyze
         </button>
       </div>
     </section>
 
-    <!-- ─── STATUS TOAST ─── -->
-    <div id="toast" class="hidden fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium"></div>
-
-    <!-- ─── RESULTS SECTION ─── -->
-    <section id="results" class="hidden fade-in space-y-6">
-
-      <h2 class="text-lg font-bold text-slate-800">Analysis Results</h2>
-
-      <!-- Summary Stats -->
-      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-slate-800" id="stat-companies">—</p>
-          <p class="text-xs text-slate-500 mt-1">Companies</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-slate-800" id="stat-partners">—</p>
-          <p class="text-xs text-slate-500 mt-1">Partners</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-slate-800" id="stat-transactions">—</p>
-          <p class="text-xs text-slate-500 mt-1">Transactions</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-emerald-600" id="stat-healthy">—</p>
-          <p class="text-xs text-slate-500 mt-1">✅ Healthy</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-amber-600" id="stat-watch">—</p>
-          <p class="text-xs text-slate-500 mt-1">⚠️ Watch</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-red-600" id="stat-risky">—</p>
-          <p class="text-xs text-slate-500 mt-1">🔴 Risky</p>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p class="text-2xl font-bold text-orange-600" id="stat-cycles">—</p>
-          <p class="text-xs text-slate-500 mt-1">🔄 Fraud Rings</p>
-        </div>
+    <!-- ──────────────────────────────────────────────
+         TAB: DASHBOARD
+         ────────────────────────────────────────────── -->
+    <section id="panelDashboard" class="tab-panel active">
+      <div id="dashboardEmpty" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-12 text-center text-slate-400">
+        <svg class="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round"
+                d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75
+                   C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75
+                   8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25
+                   c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5
+                   4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75
+                   c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+        </svg>
+        <p class="font-medium text-slate-500">No analysis data yet</p>
+        <p class="text-sm mt-1">Generate or upload XML files, then click <strong>Analyze</strong> to see results.</p>
       </div>
 
-      <!-- Fraud ring details -->
-      <div id="fraud-rings-section" class="hidden">
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-4">
-          <h3 class="text-sm font-semibold text-orange-700 mb-2">⚠ Detected Fraud Rings (Circular Trading)</h3>
-          <ul id="fraud-rings-list" class="space-y-1 text-xs text-slate-700 font-mono"></ul>
+      <div id="dashboardContent" class="hidden space-y-6">
+        <!-- Stat cards row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Companies</p>
+            <p id="statCompanies" class="text-2xl font-bold mt-1 text-slate-800">—</p>
+          </div>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Average Score</p>
+            <p id="statAvgScore" class="text-2xl font-bold mt-1 text-slate-800">—</p>
+          </div>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Revenue</p>
+            <p id="statRevenue" class="text-2xl font-bold mt-1 text-slate-800">—</p>
+          </div>
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Credit Exposure</p>
+            <p id="statExposure" class="text-2xl font-bold mt-1 text-slate-800">—</p>
+          </div>
+        </div>
+
+        <!-- Risk distribution -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+            <h3 class="font-semibold text-slate-700">Risk Distribution</h3>
+            <div class="space-y-3" id="riskBars">
+              <!-- Healthy -->
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-emerald-700 font-medium">Healthy</span>
+                  <span id="riskHealthyLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="riskHealthyBar" class="bg-emerald-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <!-- Watch -->
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-amber-700 font-medium">Watch</span>
+                  <span id="riskWatchLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="riskWatchBar" class="bg-amber-400 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <!-- Risky -->
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-red-700 font-medium">Risky</span>
+                  <span id="riskRiskyLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="riskRiskyBar" class="bg-red-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Decision distribution -->
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+            <h3 class="font-semibold text-slate-700">Decision Distribution</h3>
+            <div class="space-y-3" id="decisionBars">
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-emerald-700 font-medium">Approve</span>
+                  <span id="decApproveLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="decApproveBar" class="bg-emerald-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-amber-700 font-medium">Review</span>
+                  <span id="decReviewLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="decReviewBar" class="bg-amber-400 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-red-700 font-medium">Reject</span>
+                  <span id="decRejectLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="decRejectBar" class="bg-red-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Trend & Liquidity distributions -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+            <h3 class="font-semibold text-slate-700">Trend Distribution</h3>
+            <div class="space-y-3" id="trendBars">
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-emerald-700 font-medium">↑ Improving</span>
+                  <span id="trendImprovingLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="trendImprovingBar" class="bg-emerald-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-slate-600 font-medium">→ Stable</span>
+                  <span id="trendStableLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="trendStableBar" class="bg-slate-400 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-red-700 font-medium">↓ Deteriorating</span>
+                  <span id="trendDeterioratingLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="trendDeterioratingBar" class="bg-red-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+            <h3 class="font-semibold text-slate-700">Liquidity Distribution</h3>
+            <div class="space-y-3" id="liquidityBars">
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-emerald-700 font-medium">Stable</span>
+                  <span id="liqStableLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="liqStableBar" class="bg-emerald-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-amber-700 font-medium">Warning</span>
+                  <span id="liqWarningLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="liqWarningBar" class="bg-amber-400 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-sm mb-1">
+                  <span class="text-red-700 font-medium">Critical</span>
+                  <span id="liqCriticalLabel" class="text-slate-500">0</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-3">
+                  <div id="liqCriticalBar" class="bg-red-500 h-3 rounded-full bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alerts list -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
+          <h3 class="font-semibold text-slate-700">Alerts</h3>
+          <div id="alertsList" class="space-y-2 text-sm">
+            <p class="text-slate-400">No alerts.</p>
+          </div>
         </div>
       </div>
+    </section>
 
-      <!-- Top 5 Riskiest -->
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="px-5 py-3 border-b border-slate-100">
-          <h3 class="text-sm font-semibold text-slate-700">Top 5 Riskiest Companies</h3>
+    <!-- ──────────────────────────────────────────────
+         TAB: COMPANY LIST
+         ────────────────────────────────────────────── -->
+    <section id="panelCompanies" class="tab-panel">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+        <!-- Filters row -->
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="relative flex-1 min-w-[200px]">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none"
+                 stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+            </svg>
+            <input id="searchInput" type="text" placeholder="Search by Company ID…"
+                   oninput="filterCompanies()"
+                   class="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-sm
+                          focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"/>
+          </div>
+          <select id="riskFilter" onchange="filterCompanies()"
+                  class="border border-slate-200 rounded-xl text-sm px-3 py-2
+                         focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400">
+            <option value="">All Risk Levels</option>
+            <option value="Healthy">Healthy</option>
+            <option value="Watch">Watch</option>
+            <option value="Risky">Risky</option>
+          </select>
+          <button onclick="loadCompanies()"
+                  class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium
+                         px-4 py-2 rounded-xl transition">
+            Refresh
+          </button>
         </div>
+
+        <!-- Table -->
         <div class="overflow-x-auto">
-          <table class="w-full text-xs">
-            <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider">
-              <tr>
-                <th class="px-5 py-2.5 text-left font-medium">#</th>
-                <th class="px-5 py-2.5 text-left font-medium">Company</th>
-                <th class="px-5 py-2.5 text-left font-medium">Score</th>
-                <th class="px-5 py-2.5 text-left font-medium">Risk Level</th>
-                <th class="px-5 py-2.5 text-left font-medium">Key Reasons</th>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-400">
+                <th class="sortable py-3 px-3" data-key="company_id" onclick="sortTable('company_id')">
+                  Company ID <span class="sort-arrow"></span>
+                </th>
+                <th class="sortable py-3 px-3" data-key="score" onclick="sortTable('score')">
+                  Score <span class="sort-arrow"></span>
+                </th>
+                <th class="sortable py-3 px-3" data-key="risk_level" onclick="sortTable('risk_level')">
+                  Risk Level <span class="sort-arrow"></span>
+                </th>
+                <th class="sortable py-3 px-3" data-key="trend" onclick="sortTable('trend')">
+                  Trend <span class="sort-arrow"></span>
+                </th>
+                <th class="sortable py-3 px-3" data-key="decision" onclick="sortTable('decision')">
+                  Decision <span class="sort-arrow"></span>
+                </th>
+                <th class="sortable py-3 px-3" data-key="recommended_credit_limit" onclick="sortTable('recommended_credit_limit')">
+                  Credit Limit <span class="sort-arrow"></span>
+                </th>
               </tr>
             </thead>
-            <tbody id="top5-body" class="divide-y divide-slate-100"></tbody>
+            <tbody id="companyTableBody" class="divide-y divide-slate-100">
+              <tr><td colspan="6" class="py-8 text-center text-slate-400">
+                Click <strong>Refresh</strong> or run an analysis first.
+              </td></tr>
+            </tbody>
           </table>
         </div>
       </div>
-
-      <!-- Graph iframe -->
-      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-slate-700">Transaction Network Graph</h3>
-          <a href="/graph" target="_blank"
-            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-            Open in new tab ↗
-          </a>
-        </div>
-        <div class="h-[700px]">
-          <iframe id="graph-frame" src="about:blank"></iframe>
-        </div>
-      </div>
-
     </section>
 
-  </div>
+    <!-- ──────────────────────────────────────────────
+         TAB: COMPANY DETAIL
+         ────────────────────────────────────────────── -->
+    <section id="panelDetail" class="tab-panel">
+      <div class="space-y-4">
+        <!-- Back button -->
+        <button onclick="showTab('companies')"
+                class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 font-medium transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"/>
+          </svg>
+          Back to List
+        </button>
 
-  <!-- ─── JAVASCRIPT ─── -->
+        <div id="detailContent" class="space-y-4">
+          <!-- Populated by showCompanyDetail() -->
+          <p class="text-slate-400 text-center py-12">Select a company from the list.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ──────────────────────────────────────────────
+         TAB: NETWORK GRAPH
+         ────────────────────────────────────────────── -->
+    <section id="panelGraph" class="tab-panel">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <iframe id="graphFrame" class="w-full border-0" style="height:750px"
+                src="about:blank" title="Transaction Network Graph"></iframe>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       JAVASCRIPT
+       ════════════════════════════════════════════════════════════════ -->
   <script>
-    // ── Helpers ──────────────────────────────────────────────────────────
-    function showToast(msg, type) {
-      const t = document.getElementById('toast');
-      t.className = 'fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium fade-in';
-      if (type === 'success') t.classList.add('bg-emerald-600', 'text-white');
-      else if (type === 'error') t.classList.add('bg-red-600', 'text-white');
-      else t.classList.add('bg-indigo-600', 'text-white');
-      t.textContent = msg;
-      t.classList.remove('hidden');
-      setTimeout(() => t.classList.add('hidden'), 4000);
-    }
+  /* ----------------------------------------------------------------
+     State
+     ---------------------------------------------------------------- */
+  let companiesData = [];   // cached company list
+  let sortKey = '';
+  let sortAsc = true;
 
-    function setLoading(btnId, loading) {
-      const btn = document.getElementById(btnId);
-      if (loading) {
-        btn.disabled = true;
-        btn._origText = btn.textContent;
-        btn.innerHTML = '<span class="spinner"></span> Processing…';
+  /* ----------------------------------------------------------------
+     Utility: HTML-escape user content to prevent XSS
+     ---------------------------------------------------------------- */
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(String(s)));
+    return div.innerHTML;
+  }
+
+  /* ----------------------------------------------------------------
+     Toast notifications
+     ---------------------------------------------------------------- */
+  function showToast(msg, type) {
+    const colors = {
+      success: 'bg-emerald-600',
+      error:   'bg-red-600',
+      info:    'bg-indigo-600'
+    };
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `${colors[type] || colors.info} text-white text-sm px-4 py-3 rounded-xl shadow-lg toast-enter max-w-sm`;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3500);
+    setTimeout(() => el.remove(), 3900);
+  }
+
+  /* ----------------------------------------------------------------
+     Loading spinner helper
+     ---------------------------------------------------------------- */
+  function setLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (loading) {
+      btn.disabled = true;
+      btn.dataset.origText = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner"></span> Working…';
+      btn.classList.add('opacity-70', 'cursor-wait');
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = btn.dataset.origText || btn.innerHTML;
+      btn.classList.remove('opacity-70', 'cursor-wait');
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     Update XML badge count
+     ---------------------------------------------------------------- */
+  function updateXmlCount(count) {
+    document.getElementById('xmlCount').textContent = count;
+  }
+
+  /* ----------------------------------------------------------------
+     Tab switching
+     ---------------------------------------------------------------- */
+  function showTab(tabName) {
+    // Hide all panels
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    // Deactivate all tab buttons
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.remove('bg-white/20', 'border-white');
+      b.classList.add('border-transparent');
+    });
+    // Activate selected panel
+    const panelMap = { dashboard: 'panelDashboard', companies: 'panelCompanies',
+                       detail: 'panelDetail', graph: 'panelGraph' };
+    const panel = document.getElementById(panelMap[tabName]);
+    if (panel) panel.classList.add('active');
+    // Activate tab button
+    const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+    if (btn) {
+      btn.classList.add('bg-white/20', 'border-white');
+      btn.classList.remove('border-transparent');
+    }
+    // Load graph with cache-busting when switching to graph tab
+    if (tabName === 'graph') {
+      const frame = document.getElementById('graphFrame');
+      frame.src = '/graph?_t=' + Date.now();
+    }
+    // Auto-load companies when switching to that tab
+    if (tabName === 'companies' && companiesData.length === 0) {
+      loadCompanies();
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     FORMAT HELPERS
+     ---------------------------------------------------------------- */
+  function fmtNum(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  }
+  function fmtScore(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return Number(n).toFixed(1);
+  }
+  function fmtCurrency(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    if (Math.abs(n) >= 1e6) return '€' + (n / 1e6).toFixed(1) + 'M';
+    if (Math.abs(n) >= 1e3) return '€' + (n / 1e3).toFixed(1) + 'K';
+    return '€' + Number(n).toFixed(0);
+  }
+
+  /* Badge HTML builders */
+  function riskBadge(level) {
+    const l = (level || '').toLowerCase();
+    if (l === 'healthy') return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">Healthy</span>';
+    if (l === 'watch')   return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">Watch</span>';
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Risky</span>';
+  }
+  function decisionBadge(dec) {
+    const d = (dec || '').toLowerCase();
+    if (d === 'approve') return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">Approve</span>';
+    if (d === 'review')  return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">Review</span>';
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Reject</span>';
+  }
+  function trendArrow(trend) {
+    const t = (trend || '').toLowerCase();
+    if (t === 'improving')     return '<span class="text-emerald-600 font-medium">↑ Improving</span>';
+    if (t === 'deteriorating') return '<span class="text-red-600 font-medium">↓ Deteriorating</span>';
+    return '<span class="text-slate-500 font-medium">→ Stable</span>';
+  }
+
+  /* ----------------------------------------------------------------
+     API: Generate sample data
+     ---------------------------------------------------------------- */
+  async function doGenerate() {
+    setLoading('btnGenerate', true);
+    try {
+      const res = await fetch('/api/generate', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message || 'Sample files generated.', 'success');
+        updateXmlCount(data.xml_count);
       } else {
-        btn.disabled = false;
-        btn.textContent = btn._origText || btn.textContent;
+        showToast(data.message || 'Generation failed.', 'error');
       }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setLoading('btnGenerate', false);
     }
+  }
 
-    function updateXmlCount(count) {
-      document.getElementById('xml-count').textContent = count;
-    }
-
-    function escapeHtml(s) {
-      const d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    }
-
-    // ── Generate ────────────────────────────────────────────────────────
-    async function doGenerate() {
-      setLoading('btn-generate', true);
-      try {
-        const res = await fetch('/api/generate', { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-          showToast(data.message, 'success');
-          updateXmlCount(data.xml_count);
-        } else {
-          showToast(data.message || 'Generation failed', 'error');
-        }
-      } catch (e) {
-        showToast('Network error: ' + e.message, 'error');
+  /* ----------------------------------------------------------------
+     API: Upload ZIP
+     ---------------------------------------------------------------- */
+  async function doUpload(file) {
+    if (!file) return;
+    setLoading('btnUpload', true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message || 'Upload successful.', 'success');
+        updateXmlCount(data.xml_count);
+      } else {
+        showToast(data.message || 'Upload failed.', 'error');
       }
-      setLoading('btn-generate', false);
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setLoading('btnUpload', false);
     }
+  }
 
-    // ── Upload ZIP ──────────────────────────────────────────────────────
-    async function doUpload(file) {
-      if (!file) return;
-      const status = document.getElementById('upload-status');
-      status.classList.remove('hidden');
-      status.textContent = `Uploading ${file.name}…`;
-
-      const form = new FormData();
-      form.append('file', file);
-
-      try {
-        const res = await fetch('/api/upload', { method: 'POST', body: form });
-        const data = await res.json();
-        if (data.ok) {
-          showToast(data.message, 'success');
-          status.innerHTML = `<span class="text-emerald-600 font-medium">✓ ${escapeHtml(data.message)}</span>`;
-          updateXmlCount(data.xml_count);
-        } else {
-          showToast(data.message || 'Upload failed', 'error');
-          status.innerHTML = `<span class="text-red-600 font-medium">✗ ${escapeHtml(data.message)}</span>`;
-        }
-      } catch (e) {
-        showToast('Network error: ' + e.message, 'error');
-        status.innerHTML = `<span class="text-red-600">✗ Error</span>`;
+  /* ----------------------------------------------------------------
+     API: Analyze
+     ---------------------------------------------------------------- */
+  async function doAnalyze() {
+    setLoading('btnAnalyze', true);
+    try {
+      const res = await fetch('/api/analyze', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(data.message || 'Analysis complete.', 'success');
+        renderDashboard(data);
+        showTab('dashboard');
+      } else {
+        showToast(data.message || 'Analysis failed.', 'error');
       }
-      // Reset file input so user can re-upload the same file
-      document.getElementById('file-input').value = '';
+    } catch (e) {
+      showToast('Network error: ' + e.message, 'error');
+    } finally {
+      setLoading('btnAnalyze', false);
     }
+  }
 
-    // Drag-and-drop
-    const dropZone = document.getElementById('drop-zone');
-    ['dragenter', 'dragover'].forEach(ev =>
-      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add('dragover'); })
-    );
-    ['dragleave', 'drop'].forEach(ev =>
-      dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove('dragover'); })
-    );
-    dropZone.addEventListener('drop', e => {
-      const files = e.dataTransfer.files;
-      if (files.length) doUpload(files[0]);
+  /* ----------------------------------------------------------------
+     DASHBOARD RENDERING
+     ---------------------------------------------------------------- */
+  function renderDashboard(analysisData) {
+    document.getElementById('dashboardEmpty').classList.add('hidden');
+    document.getElementById('dashboardContent').classList.remove('hidden');
+
+    // Fetch portfolio data for richer dashboard
+    fetch('/api/portfolio').then(r => r.json()).then(pf => {
+      populateDashboard(analysisData, pf);
+    }).catch(() => {
+      // Fall back to analysis data only
+      populateDashboard(analysisData, null);
+    });
+  }
+
+  function populateDashboard(ad, pf) {
+    const p = pf || ad.portfolio || {};
+
+    // Stat cards
+    document.getElementById('statCompanies').textContent = fmtNum(p.total_companies || ad.num_companies);
+    document.getElementById('statAvgScore').textContent = fmtScore(p.average_score);
+    document.getElementById('statRevenue').textContent = fmtCurrency(p.total_revenue);
+    document.getElementById('statExposure').textContent = fmtCurrency(p.total_credit_exposure);
+
+    // Risk distribution bars
+    const rd = p.risk_distribution || {};
+    const rTotal = (rd.Healthy || 0) + (rd.Watch || 0) + (rd.Risky || 0) || 1;
+    setBar('riskHealthy', rd.Healthy || ad.risk_healthy || 0, rTotal);
+    setBar('riskWatch',   rd.Watch   || ad.risk_watch   || 0, rTotal);
+    setBar('riskRisky',   rd.Risky   || ad.risk_risky   || 0, rTotal);
+
+    // Decision distribution bars
+    const dd = p.decision_distribution || {};
+    const dTotal = (dd.approve || 0) + (dd.review || 0) + (dd.reject || 0) || 1;
+    setBar('decApprove', dd.approve || 0, dTotal);
+    setBar('decReview',  dd.review  || 0, dTotal);
+    setBar('decReject',  dd.reject  || 0, dTotal);
+
+    // Trend distribution bars
+    const td = p.trend_distribution || {};
+    const tTotal = (td.improving || 0) + (td.stable || 0) + (td.deteriorating || 0) || 1;
+    setBar('trendImproving',     td.improving     || 0, tTotal);
+    setBar('trendStable',        td.stable        || 0, tTotal);
+    setBar('trendDeteriorating', td.deteriorating || 0, tTotal);
+
+    // Liquidity distribution bars
+    const ld = p.liquidity_distribution || {};
+    const lTotal = (ld.stable || 0) + (ld.warning || 0) + (ld.critical || 0) || 1;
+    setBar('liqStable',   ld.stable   || 0, lTotal);
+    setBar('liqWarning',  ld.warning  || 0, lTotal);
+    setBar('liqCritical', ld.critical || 0, lTotal);
+
+    // Alerts
+    const alertsEl = document.getElementById('alertsList');
+    const alerts = p.alerts || [];
+    if (alerts.length === 0) {
+      alertsEl.innerHTML = '<p class="text-slate-400">No alerts.</p>';
+    } else {
+      alertsEl.innerHTML = alerts.map(a => {
+        const icon = a.type === 'warning'
+          ? '<svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>'
+          : '<svg class="w-4 h-4 text-red-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>';
+        return `<div class="flex items-start gap-2 p-2 rounded-lg bg-slate-50">${icon}<span>${escapeHtml(a.message)}</span></div>`;
+      }).join('');
+    }
+  }
+
+  /** Set a distribution bar width and label */
+  function setBar(prefix, count, total) {
+    const pct = total > 0 ? (count / total * 100) : 0;
+    document.getElementById(prefix + 'Bar').style.width = pct.toFixed(1) + '%';
+    document.getElementById(prefix + 'Label').textContent = count;
+  }
+
+  /* ----------------------------------------------------------------
+     API: Load company list
+     ---------------------------------------------------------------- */
+  async function loadCompanies() {
+    try {
+      const res = await fetch('/api/companies');
+      const data = await res.json();
+      companiesData = Array.isArray(data) ? data : [];
+      renderCompanyTable();
+    } catch (e) {
+      showToast('Failed to load companies: ' + e.message, 'error');
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     Render company table (with current sort & filter)
+     ---------------------------------------------------------------- */
+  function renderCompanyTable() {
+    const search = (document.getElementById('searchInput').value || '').toLowerCase();
+    const riskF  = document.getElementById('riskFilter').value;
+
+    let rows = companiesData.filter(c => {
+      if (search && !(c.company_id || '').toLowerCase().includes(search)) return false;
+      if (riskF  && c.risk_level !== riskF) return false;
+      return true;
     });
 
-    // ── Analyze ─────────────────────────────────────────────────────────
-    async function doAnalyze() {
-      setLoading('btn-analyze', true);
-      try {
-        const res = await fetch('/api/analyze', { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-          showToast(data.message, 'success');
-          renderResults(data);
-        } else {
-          showToast(data.message || 'Analysis failed', 'error');
-        }
-      } catch (e) {
-        showToast('Network error: ' + e.message, 'error');
-      }
-      setLoading('btn-analyze', false);
-    }
-
-    // ── Render Results ──────────────────────────────────────────────────
-    function renderResults(d) {
-      // Stats
-      document.getElementById('stat-companies').textContent = d.num_companies;
-      document.getElementById('stat-partners').textContent = d.num_partners;
-      document.getElementById('stat-transactions').textContent = d.num_transactions.toLocaleString();
-      document.getElementById('stat-healthy').textContent = d.risk_healthy;
-      document.getElementById('stat-watch').textContent = d.risk_watch;
-      document.getElementById('stat-risky').textContent = d.risk_risky;
-      document.getElementById('stat-cycles').textContent = d.cycles.length;
-
-      // Fraud rings
-      const frSection = document.getElementById('fraud-rings-section');
-      if (d.cycles && d.cycles.length) {
-        frSection.classList.remove('hidden');
-        const ul = document.getElementById('fraud-rings-list');
-        ul.innerHTML = d.cycles.map((c, i) =>
-          `<li>Ring ${i + 1}: ${c.map(escapeHtml).join(' → ')} → ${escapeHtml(c[0])}</li>`
-        ).join('');
-      } else {
-        frSection.classList.add('hidden');
-      }
-
-      // Top 5
-      const tbody = document.getElementById('top5-body');
-      tbody.innerHTML = '';
-      (d.top5 || []).forEach((s, i) => {
-        const badge = s.risk_level === 'Risky'
-          ? 'bg-red-100 text-red-700'
-          : s.risk_level === 'Watch'
-            ? 'bg-amber-100 text-amber-700'
-            : 'bg-emerald-100 text-emerald-700';
-        const reasons = (s.explanation || []).slice(0, 2).map(escapeHtml).join('<br>');
-        tbody.innerHTML += `
-          <tr class="hover:bg-slate-50">
-            <td class="px-5 py-3 text-slate-500">${i + 1}</td>
-            <td class="px-5 py-3 font-medium text-slate-800">${escapeHtml(s.company_id)}</td>
-            <td class="px-5 py-3 font-mono font-semibold">${s.score.toFixed(1)}</td>
-            <td class="px-5 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${escapeHtml(s.risk_level)}</span></td>
-            <td class="px-5 py-3 text-slate-600">${reasons}</td>
-          </tr>`;
+    // Sort
+    if (sortKey) {
+      rows.sort((a, b) => {
+        let va = a[sortKey], vb = b[sortKey];
+        if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
+        va = String(va || '').toLowerCase();
+        vb = String(vb || '').toLowerCase();
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
       });
-
-      // Graph iframe — add cache-busting param
-      document.getElementById('graph-frame').src = '/graph?t=' + Date.now();
-
-      // Show results section
-      document.getElementById('results').classList.remove('hidden');
-      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
+    const tbody = document.getElementById('companyTableBody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-slate-400">No companies found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(c => `
+      <tr class="hover:bg-indigo-50/50 cursor-pointer transition" onclick="showCompanyDetail('${escapeHtml(c.company_id)}')">
+        <td class="py-3 px-3 font-medium text-indigo-700">${escapeHtml(c.company_id)}</td>
+        <td class="py-3 px-3">${fmtScore(c.score)}</td>
+        <td class="py-3 px-3">${riskBadge(c.risk_level)}</td>
+        <td class="py-3 px-3">${trendArrow(c.trend)}</td>
+        <td class="py-3 px-3">${decisionBadge(c.decision)}</td>
+        <td class="py-3 px-3 text-right font-mono">${fmtCurrency(c.recommended_credit_limit)}</td>
+      </tr>
+    `).join('');
+
+    // Update sort arrows
+    document.querySelectorAll('th.sortable .sort-arrow').forEach(el => el.textContent = '');
+    if (sortKey) {
+      const th = document.querySelector(`th[data-key="${sortKey}"] .sort-arrow`);
+      if (th) th.textContent = sortAsc ? ' ↑' : ' ↓';
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     Sort table
+     ---------------------------------------------------------------- */
+  function sortTable(key) {
+    if (sortKey === key) {
+      sortAsc = !sortAsc;
+    } else {
+      sortKey = key;
+      sortAsc = true;
+    }
+    renderCompanyTable();
+  }
+
+  /* ----------------------------------------------------------------
+     Filter companies (called on input/change)
+     ---------------------------------------------------------------- */
+  function filterCompanies() {
+    renderCompanyTable();
+  }
+
+  /* ----------------------------------------------------------------
+     API: Show company detail
+     ---------------------------------------------------------------- */
+  async function showCompanyDetail(companyId) {
+    // Show the detail tab
+    document.getElementById('detailTab').classList.remove('hidden');
+    showTab('detail');
+
+    const container = document.getElementById('detailContent');
+    container.innerHTML = '<div class="flex justify-center py-12"><span class="spinner text-indigo-600" style="width:2rem;height:2rem;border-width:3px"></span></div>';
+
+    try {
+      const res = await fetch('/api/company/' + encodeURIComponent(companyId));
+      const c = await res.json();
+      renderCompanyDetail(c);
+    } catch (e) {
+      container.innerHTML = '<p class="text-red-500 text-center py-12">Failed to load company: ' + escapeHtml(e.message) + '</p>';
+    }
+  }
+
+  /* ----------------------------------------------------------------
+     Render company detail
+     ---------------------------------------------------------------- */
+  function renderCompanyDetail(c) {
+    const container = document.getElementById('detailContent');
+    const score = c.score || {};
+    const decision = c.decision || {};
+    const metrics = c.metrics || {};
+    const months = metrics.months || [];
+    const partners = c.top_partners || [];
+    const exposure = c.exposure;
+    const cashFlow = c.cash_flow;
+
+    // Find max revenue for bar chart scaling
+    const maxRev = Math.max(...months.map(m => Math.abs(m.revenue || 0)), 1);
+
+    let html = '';
+
+    /* ── Header row ── */
+    html += `
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-slate-800">${escapeHtml(c.company_id)}</h2>
+          <div class="flex items-center gap-3 mt-1">
+            ${riskBadge(score.risk_level)}
+            ${trendArrow(score.trend || (metrics.trend))}
+            ${decisionBadge(decision.decision)}
+          </div>
+        </div>
+        <div class="text-right">
+          <p class="text-3xl font-bold text-indigo-700">${fmtScore(score.score)}</p>
+          <p class="text-xs text-slate-400 uppercase tracking-wider">Risk Score</p>
+        </div>
+      </div>
+    </div>`;
+
+    /* ── Score explanation / risk factors ── */
+    const explanations = score.explanation || [];
+    if (explanations.length > 0) {
+      html += `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-2">
+        <h3 class="font-semibold text-slate-700">Risk Factors</h3>
+        <ul class="space-y-1">
+          ${explanations.map(e => `<li class="flex items-start gap-2 text-sm">
+            <span class="mt-0.5 w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
+            <span>${escapeHtml(e)}</span>
+          </li>`).join('')}
+        </ul>
+      </div>`;
+    }
+
+    /* ── Decision detail ── */
+    html += `
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-2">
+      <h3 class="font-semibold text-slate-700">Decision</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+        <div>
+          <p class="text-slate-400 text-xs uppercase">Decision</p>
+          <p class="mt-0.5">${decisionBadge(decision.decision)}</p>
+        </div>
+        <div>
+          <p class="text-slate-400 text-xs uppercase">Credit Limit</p>
+          <p class="mt-0.5 font-medium">${fmtCurrency(decision.recommended_credit_limit)}</p>
+        </div>
+        <div>
+          <p class="text-slate-400 text-xs uppercase">Explanation</p>
+          <p class="mt-0.5">${escapeHtml(decision.explanation || '—')}</p>
+        </div>
+      </div>
+    </div>`;
+
+    /* ── Revenue chart (simple bar chart using divs) ── */
+    if (months.length > 0) {
+      html += `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
+        <h3 class="font-semibold text-slate-700">Monthly Revenue</h3>
+        <div class="space-y-2">
+          ${months.map(m => {
+            const pct = maxRev > 0 ? (Math.abs(m.revenue || 0) / maxRev * 100) : 0;
+            const isNeg = (m.revenue || 0) < 0;
+            return `
+            <div class="flex items-center gap-3 text-sm">
+              <span class="w-20 text-slate-500 shrink-0 text-right">${escapeHtml(m.month)}</span>
+              <div class="flex-1 bg-slate-100 rounded h-5 overflow-hidden">
+                <div class="h-5 rounded bar-fill ${isNeg ? 'bg-red-400' : 'bg-indigo-500'}"
+                     style="width:${pct.toFixed(1)}%"></div>
+              </div>
+              <span class="w-20 text-right font-mono ${isNeg ? 'text-red-600' : 'text-slate-700'}">${fmtCurrency(m.revenue)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    /* ── Expenses & net flow chart ── */
+    if (months.length > 0) {
+      const maxNet = Math.max(...months.map(m => Math.abs(m.net_flow || 0)), 1);
+      html += `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
+        <h3 class="font-semibold text-slate-700">Monthly Net Cash Flow</h3>
+        <div class="space-y-2">
+          ${months.map(m => {
+            const nf = m.net_flow || 0;
+            const pct = maxNet > 0 ? (Math.abs(nf) / maxNet * 100) : 0;
+            const isNeg = nf < 0;
+            return `
+            <div class="flex items-center gap-3 text-sm">
+              <span class="w-20 text-slate-500 shrink-0 text-right">${escapeHtml(m.month)}</span>
+              <div class="flex-1 bg-slate-100 rounded h-5 overflow-hidden">
+                <div class="h-5 rounded bar-fill ${isNeg ? 'bg-red-400' : 'bg-emerald-500'}"
+                     style="width:${pct.toFixed(1)}%"></div>
+              </div>
+              <span class="w-20 text-right font-mono ${isNeg ? 'text-red-600' : 'text-emerald-700'}">${fmtCurrency(nf)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    /* ── Top partners ── */
+    if (partners.length > 0) {
+      html += `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-3">
+        <h3 class="font-semibold text-slate-700">Top Partners</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-400">
+                <th class="py-2 px-3">Partner ID</th>
+                <th class="py-2 px-3">Label</th>
+                <th class="py-2 px-3 text-right">Volume</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${partners.map(p => `
+              <tr class="hover:bg-slate-50">
+                <td class="py-2 px-3 font-medium text-indigo-700">${escapeHtml(p.partner_id)}</td>
+                <td class="py-2 px-3">${escapeHtml(p.label)}</td>
+                <td class="py-2 px-3 text-right font-mono">${fmtCurrency(p.volume)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+
+    /* ── Exposure info ── */
+    if (exposure !== null && exposure !== undefined) {
+      html += `
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h3 class="font-semibold text-slate-700 mb-1">Credit Exposure</h3>
+        <p class="text-2xl font-bold text-slate-800">${fmtCurrency(exposure)}</p>
+      </div>`;
+    }
+
+    container.innerHTML = html;
+  }
+
+  /* ----------------------------------------------------------------
+     Drag-and-drop for ZIP upload
+     ---------------------------------------------------------------- */
+  (function initDragDrop() {
+    const zone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    ['dragenter', 'dragover'].forEach(evt =>
+      zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drop-active'); })
+    );
+    ['dragleave', 'drop'].forEach(evt =>
+      zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('drop-active'); })
+    );
+
+    zone.addEventListener('drop', e => {
+      const files = e.dataTransfer.files;
+      if (files.length > 0) doUpload(files[0]);
+    });
+
+    zone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) doUpload(fileInput.files[0]);
+      fileInput.value = '';          // reset so same file can be re-selected
+    });
+  })();
+
+  /* ----------------------------------------------------------------
+     Initialise: show dashboard tab active
+     ---------------------------------------------------------------- */
+  showTab('dashboard');
   </script>
 </body>
 </html>
-
