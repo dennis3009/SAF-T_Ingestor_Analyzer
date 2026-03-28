@@ -152,7 +152,7 @@ def main() -> None:
     print()
     print("  Top 5 riskiest companies:")
     for s in scores[:5]:
-        trend = s.get('trend', 'stable')
+        trend = s.get("trend", "stable")
         print(
             f"    [{s['risk_level']:7s}] {s['company_id']:12s} "
             f"score={s['score']:5.1f}  trend={trend:13s}  |  "

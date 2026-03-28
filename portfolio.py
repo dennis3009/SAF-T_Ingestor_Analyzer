@@ -95,24 +95,29 @@ def compute_portfolio(
     cycle_details = graph_metrics.get("cycle_details", [])
 
     # Alerts
+    def _plural(n, singular, plural=None):
+        if plural is None:
+            plural = singular + "s"
+        return f"{n} {singular}" if n == 1 else f"{n} {plural}"
+
     alerts = []
     deteriorating_count = trend_dist["deteriorating"]
     if deteriorating_count > 0:
         alerts.append({
             "type": "warning",
-            "message": f"{deteriorating_count} company(ies) with deteriorating trend",
+            "message": f"{_plural(deteriorating_count, 'company', 'companies')} with deteriorating trend",
         })
     risky_count = risk_dist["Risky"]
     if risky_count > 0:
         alerts.append({
             "type": "danger",
-            "message": f"{risky_count} company(ies) flagged as Risky",
+            "message": f"{_plural(risky_count, 'company', 'companies')} flagged as Risky",
         })
     rejected_count = decision_dist["reject"]
     if rejected_count > 0:
         alerts.append({
             "type": "danger",
-            "message": f"{rejected_count} company(ies) recommended for rejection",
+            "message": f"{_plural(rejected_count, 'company', 'companies')} recommended for rejection",
         })
     if cycles_detected > 0:
         alerts.append({
@@ -123,7 +128,7 @@ def compute_portfolio(
     if critical_liq > 0:
         alerts.append({
             "type": "danger",
-            "message": f"{critical_liq} company(ies) with critical liquidity",
+            "message": f"{_plural(critical_liq, 'company', 'companies')} with critical liquidity",
         })
 
     # Total revenue across portfolio

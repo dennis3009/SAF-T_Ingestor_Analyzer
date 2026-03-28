@@ -97,7 +97,6 @@ def _find_cycles(adj: dict) -> list:
 
 
 def _propagate_risk(
-    nodes_by_id: dict,
     edge_weight: dict,
     score_map: dict,
     company_ids: set,
@@ -238,7 +237,7 @@ def build_graph(
 
     # --- Risk propagation ---
     exposure_map = _propagate_risk(
-        {}, edge_weight, score_map, company_ids
+        edge_weight, score_map, company_ids
     )
 
     # --- Build nodes list ---

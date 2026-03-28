@@ -10,7 +10,6 @@ Uses Tailwind CSS (CDN) for styling and vis-network (CDN) for the graph.
 Output: data/outputs/index.html
 """
 
-import html as html_mod
 import json
 import os
 
@@ -289,7 +288,7 @@ th.sorted .sort-arrow{opacity:1;color:#4f46e5}
 // ── Helpers ─────────────────────────────────────────────────────────────
 function esc(s){
   if(s==null) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function fmt(n){
   if(n==null) return '—';
