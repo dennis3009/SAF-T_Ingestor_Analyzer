@@ -1,5 +1,5 @@
 """
-scoring.py - Behavioral risk scoring for SAF-T companies.
+scoring.py - Enhanced behavioral risk scoring for SAF-T companies.
 
 For each company, computes a score from 0 to 100 (100 = fully healthy).
 Penalties are applied for:
@@ -7,8 +7,10 @@ Penalties are applied for:
   2. Customer concentration (top customer > 50 % of total sales)
   3. Revenue spikes (month-over-month growth > 100 %)
   4. Transaction irregularity (uneven distribution across months)
+  5. Trend deterioration (revenue declining for 3+ consecutive months)
+  6. Dependency increase (growing reliance on top partner over time)
 
-Output: data/json/scores.json
+Output: data/json/scores.json (with trend + explainability)
 """
 
 import os
@@ -25,6 +27,9 @@ SCORES_JSON = os.path.join(
 )
 GRAPH_JSON = os.path.join(
     os.path.dirname(__file__), "data", "json", "graph.json"
+)
+MONTHLY_METRICS_JSON = os.path.join(
+    os.path.dirname(__file__), "data", "json", "monthly_metrics.json"
 )
 
 RISK_THRESHOLDS = {
@@ -68,6 +73,84 @@ def _risk_level(score: float) -> str:
     return "Risky"
 
 
+def _detect_trend(monthly: dict) -> str:
+    """Detect revenue trend from monthly totals."""
+    sorted_months = sorted(monthly.keys())
+    if len(sorted_months) < 3:
+        return "stable"
+
+    values = [monthly[m] for m in sorted_months]
+
+    # Check for 3 consecutive months of decline
+    declining_streak = 0
+    max_declining = 0
+    for i in range(1, len(values)):
+        if values[i] < values[i - 1]:
+            declining_streak += 1
+            max_declining = max(max_declining, declining_streak)
+        else:
+            declining_streak = 0
+
+    growing_streak = 0
+    max_growing = 0
+    for i in range(1, len(values)):
+        if values[i] > values[i - 1]:
+            growing_streak += 1
+            max_growing = max(max_growing, growing_streak)
+        else:
+            growing_streak = 0
+
+    if max_declining >= 3:
+        return "deteriorating"
+    if max_growing >= 3:
+        return "improving"
+
+    # Overall direction
+    third = max(1, len(values) // 3)
+    early_avg = sum(values[:third]) / third
+    late_avg = sum(values[-third:]) / third
+    if early_avg > 0:
+        change = (late_avg - early_avg) / early_avg
+        if change < -0.15:
+            return "deteriorating"
+        if change > 0.15:
+            return "improving"
+
+    return "stable"
+
+
+def _dependency_increase(sales: list) -> tuple:
+    """
+    Check if dependency on top partner is increasing over time.
+    Returns (is_increasing, details_string).
+    """
+    if len(sales) < 6:
+        return False, ""
+
+    # Split sales into first half and second half by date
+    sorted_sales = sorted(sales, key=lambda t: t["date"])
+    mid = len(sorted_sales) // 2
+    first_half = sorted_sales[:mid]
+    second_half = sorted_sales[mid:]
+
+    def top_concentration(txs):
+        by_partner: dict = defaultdict(float)
+        total = 0.0
+        for t in txs:
+            by_partner[t["partner_id"]] += t["amount"]
+            total += t["amount"]
+        if total == 0:
+            return 0.0
+        return max(by_partner.values()) / total
+
+    early_conc = top_concentration(first_half)
+    late_conc = top_concentration(second_half)
+
+    if late_conc > early_conc + 0.15:
+        return True, f"early={early_conc:.0%}, recent={late_conc:.0%}"
+    return False, ""
+
+
 def score_companies(
     csv_path: str = TRANSACTIONS_CSV,
     output_path: str = SCORES_JSON,
@@ -75,7 +158,7 @@ def score_companies(
     """
     Compute behavioral risk scores for all companies.
 
-    Returns a list of score dicts.
+    Returns a list of score dicts with trend and explainability.
     """
     transactions = _load_transactions(csv_path)
 
@@ -98,6 +181,7 @@ def score_companies(
                     "company_id": company_id,
                     "score": 50.0,
                     "risk_level": "Watch",
+                    "trend": "stable",
                     "explanation": ["No sales transactions found"],
                 }
             )
@@ -180,6 +264,24 @@ def score_companies(
                     f"Irregular transaction timing (CV={tx_cv:.2f}): -{penalty} pts"
                 )
 
+        # 5. Trend deterioration
+        trend = _detect_trend(monthly)
+        if trend == "deteriorating":
+            penalty = 12
+            score -= penalty
+            reasons.append(
+                f"Revenue trend deteriorating: -{penalty} pts"
+            )
+
+        # 6. Dependency increase over time
+        dep_increasing, dep_details = _dependency_increase(sales)
+        if dep_increasing:
+            penalty = 10
+            score -= penalty
+            reasons.append(
+                f"Increasing dependency on top partner ({dep_details}): -{penalty} pts"
+            )
+
         score = max(0.0, round(score, 1))
         if not reasons:
             reasons.append("No significant risk indicators detected")
@@ -189,6 +291,7 @@ def score_companies(
                 "company_id": company_id,
                 "score": score,
                 "risk_level": _risk_level(score),
+                "trend": trend,
                 "explanation": reasons,
             }
         )

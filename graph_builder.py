@@ -1,12 +1,13 @@
 """
-graph_builder.py - Transaction network graph construction and analysis.
+graph_builder.py - Transaction network graph construction, analysis, and risk propagation.
 
 Builds a directed graph where:
   - Nodes  = companies + partners
   - Edges  = transaction flows
   - Weight = total transaction value
 
-Computes per-node metrics and detects cycles (fraud rings).
+Computes per-node metrics, detects cycles (fraud rings), and propagates
+risk to connected nodes based on exposure.
 
 Output: data/json/graph.json
 """
@@ -95,6 +96,87 @@ def _find_cycles(adj: dict) -> list:
     return unique
 
 
+def _propagate_risk(
+    nodes_by_id: dict,
+    edge_weight: dict,
+    score_map: dict,
+    company_ids: set,
+) -> dict:
+    """
+    Propagate risk through the network.
+
+    For each company, compute an exposure_score based on:
+      - Direct exposure: high transaction volume with risky nodes
+      - Indirect exposure: multi-hop connections to risky nodes (2 hops)
+
+    Returns dict: company_id -> {exposure_score, direct_risky_partners, indirect_exposure}
+    """
+    # Build adjacency with weights (both directions)
+    neighbors: dict = defaultdict(dict)  # node -> {neighbor -> total_weight}
+    for (src, dst), weight in edge_weight.items():
+        neighbors[src][dst] = weight
+        neighbors[dst][src] = neighbors[dst].get(src, 0) + weight
+
+    # Identify risky nodes (score < 40)
+    risky_nodes = set()
+    for cid, s in score_map.items():
+        if s.get("score", 100) < 40:
+            risky_nodes.add(cid)
+
+    exposure = {}
+
+    for cid in company_ids:
+        if cid not in neighbors:
+            exposure[cid] = {
+                "exposure_score": 0,
+                "direct_risky_partners": [],
+                "indirect_exposure": False,
+            }
+            continue
+
+        company_volume = sum(neighbors[cid].values())
+        if company_volume == 0:
+            exposure[cid] = {
+                "exposure_score": 0,
+                "direct_risky_partners": [],
+                "indirect_exposure": False,
+            }
+            continue
+
+        # Direct exposure: what % of volume is with risky nodes
+        direct_risky_volume = 0
+        direct_risky_partners = []
+        for neighbor, weight in neighbors[cid].items():
+            if neighbor in risky_nodes and neighbor != cid:
+                direct_risky_volume += weight
+                direct_risky_partners.append(neighbor)
+
+        direct_ratio = direct_risky_volume / company_volume if company_volume > 0 else 0
+
+        # Indirect exposure: 2-hop connections to risky nodes
+        indirect_exposure = False
+        for neighbor in neighbors[cid]:
+            if neighbor == cid or neighbor in risky_nodes:
+                continue
+            for hop2 in neighbors.get(neighbor, {}):
+                if hop2 in risky_nodes and hop2 != cid:
+                    indirect_exposure = True
+                    break
+            if indirect_exposure:
+                break
+
+        # Exposure score: 0-100 scale
+        exposure_score = round(min(100, direct_ratio * 100 + (15 if indirect_exposure else 0)), 1)
+
+        exposure[cid] = {
+            "exposure_score": exposure_score,
+            "direct_risky_partners": direct_risky_partners,
+            "indirect_exposure": indirect_exposure,
+        }
+
+    return exposure
+
+
 def build_graph(
     tx_path: str = TRANSACTIONS_CSV,
     companies_path: str = COMPANIES_JSON,
@@ -154,6 +236,11 @@ def build_graph(
     for cycle in cycles:
         cycle_nodes.update(cycle)
 
+    # --- Risk propagation ---
+    exposure_map = _propagate_risk(
+        {}, edge_weight, score_map, company_ids
+    )
+
     # --- Build nodes list ---
     nodes = []
     all_node_ids = (
@@ -175,6 +262,7 @@ def build_graph(
 
     for nid in active_nodes:
         s = score_map.get(nid, {})
+        exp = exposure_map.get(nid, {})
         node = {
             "id": nid,
             "label": node_id_lookup.get(nid, nid),
@@ -185,6 +273,10 @@ def build_graph(
             "in_cycle": nid in cycle_nodes,
             "score": s.get("score", None),
             "risk_level": s.get("risk_level", None),
+            "trend": s.get("trend", None),
+            "exposure_score": exp.get("exposure_score", 0),
+            "direct_risky_partners": exp.get("direct_risky_partners", []),
+            "indirect_exposure": exp.get("indirect_exposure", False),
         }
         nodes.append(node)
 
@@ -213,6 +305,15 @@ def build_graph(
             top = max(rev_map.values())
             partner_concentration[cid] = round(top / total, 4)
 
+    # --- Top partners per company ---
+    top_partners: dict = {}
+    for cid, rev_map in revenue_by_company_partner.items():
+        sorted_partners = sorted(rev_map.items(), key=lambda x: -x[1])[:5]
+        top_partners[cid] = [
+            {"partner_id": pid, "amount": round(amt, 2)}
+            for pid, amt in sorted_partners
+        ]
+
     metrics = {
         "num_nodes": len(nodes),
         "num_edges": len(edges),
@@ -220,6 +321,7 @@ def build_graph(
         "cycle_details": cycles,
         "cycle_node_ids": list(cycle_nodes),
         "partner_concentration": partner_concentration,
+        "top_partners": top_partners,
     }
 
     graph = {"nodes": nodes, "edges": edges, "metrics": metrics}
@@ -228,9 +330,10 @@ def build_graph(
     with open(output_path, "w", encoding="utf-8") as fh:
         json.dump(graph, fh, indent=2, ensure_ascii=False)
 
+    exposed = sum(1 for n in nodes if n.get("exposure_score", 0) > 0 and n["type"] == "company")
     print(
         f"[graph_builder] Graph: {len(nodes)} nodes, {len(edges)} edges, "
-        f"{len(cycles)} cycle(s) detected"
+        f"{len(cycles)} cycle(s) detected, {exposed} companies with risk exposure"
     )
     return graph
 

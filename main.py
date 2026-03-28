@@ -1,12 +1,17 @@
 """
-main.py - Orchestration entry point for the SAF-T Ingestor & Analyzer PoC.
+main.py - Orchestration entry point for the SAF-T Ingestor & Analyzer.
 
 Steps:
-  1. Generate synthetic SAF-T XML data
-  2. Parse XML into JSON / CSV
-  3. Compute behavioral risk scores
-  4. Build transaction network graph
-  5. Generate interactive HTML visualisation
+  1.  Generate synthetic SAF-T XML data
+  2.  Parse XML into JSON / CSV
+  3.  Compute behavioral risk scores
+  4.  Build transaction network graph (+ risk propagation)
+  5.  Compute time-series / monthly metrics
+  6.  Compute cash-flow approximation
+  7.  Generate credit decisions
+  8.  Build portfolio-level insights
+  9.  Generate interactive HTML UI
+  10. Print summary report
 
 Prints a summary report to stdout.
 """
@@ -21,6 +26,10 @@ import generator
 import parser
 import scoring
 import graph_builder
+import time_series
+import cash_flow
+import decision_engine
+import portfolio
 import visualize
 
 
@@ -35,7 +44,7 @@ def print_separator(title: str = "") -> None:
 
 
 def main() -> None:
-    print_separator("SAF-T Ingestor & Analyzer — PoC")
+    print_separator("SAF-T Ingestor & Analyzer — Banking Demo")
 
     # ------------------------------------------------------------------
     # Step 1: Generate synthetic data
@@ -69,9 +78,33 @@ def main() -> None:
         graph = graph_builder.build_graph()
 
     # ------------------------------------------------------------------
-    # Step 5: Visualise
+    # Step 5: Time-series monthly metrics
     # ------------------------------------------------------------------
-    print_separator("Step 5: Generating visualisation …")
+    print_separator("Step 5: Computing monthly metrics & trends …")
+    monthly_metrics = time_series.compute_monthly_metrics()
+
+    # ------------------------------------------------------------------
+    # Step 6: Cash flow approximation
+    # ------------------------------------------------------------------
+    print_separator("Step 6: Computing cash flow analysis …")
+    cash_flow_data = cash_flow.compute_cash_flow()
+
+    # ------------------------------------------------------------------
+    # Step 7: Credit decisions
+    # ------------------------------------------------------------------
+    print_separator("Step 7: Generating credit decisions …")
+    decisions = decision_engine.compute_decisions()
+
+    # ------------------------------------------------------------------
+    # Step 8: Portfolio insights
+    # ------------------------------------------------------------------
+    print_separator("Step 8: Computing portfolio insights …")
+    portfolio_data = portfolio.compute_portfolio()
+
+    # ------------------------------------------------------------------
+    # Step 9: Generate UI
+    # ------------------------------------------------------------------
+    print_separator("Step 9: Generating interactive UI …")
     visualize.visualize()
 
     # ------------------------------------------------------------------
@@ -106,24 +139,39 @@ def main() -> None:
     else:
         print("  No circular trading patterns detected.")
 
+    # Decision summary
+    approved = sum(1 for d in decisions if d["decision"] == "approve")
+    review = sum(1 for d in decisions if d["decision"] == "review")
+    rejected = sum(1 for d in decisions if d["decision"] == "reject")
+    print()
+    print(f"  Credit decisions:")
+    print(f"    ✅ Approve          : {approved}")
+    print(f"    🔍 Review           : {review}")
+    print(f"    ❌ Reject           : {rejected}")
+
     print()
     print("  Top 5 riskiest companies:")
     for s in scores[:5]:
+        trend = s.get('trend', 'stable')
         print(
             f"    [{s['risk_level']:7s}] {s['company_id']:12s} "
-            f"score={s['score']:5.1f}  |  "
+            f"score={s['score']:5.1f}  trend={trend:13s}  |  "
             + "; ".join(s["explanation"][:2])
         )
 
     print()
     print("  Output files:")
-    print("    data/raw_xml/       — synthetic SAF-T XML files")
+    print("    data/raw_xml/              — synthetic SAF-T XML files")
     print("    data/json/companies.json")
     print("    data/json/partners.json")
-    print("    data/json/scores.json")
-    print("    data/json/graph.json")
+    print("    data/json/scores.json      — risk scores + explanations")
+    print("    data/json/graph.json       — network + risk propagation")
+    print("    data/json/monthly_metrics.json — time-series data")
+    print("    data/json/cash_flow.json   — cash flow analysis")
+    print("    data/json/decisions.json   — credit decisions")
+    print("    data/json/portfolio.json   — portfolio summary")
     print("    data/csv/transactions.csv")
-    print("    data/outputs/graph.html  ← open in browser!")
+    print("    data/outputs/index.html    ← open in browser!")
     print_separator()
 
 

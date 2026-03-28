@@ -28,10 +28,10 @@ COMPANIES_JSON = os.path.join(_JSON, "companies.json")
 OUTPUT_HTML = os.path.join(_BASE, "data", "outputs", "index.html")
 
 
-def _load(path: str):
-    """Load a JSON file, returning an empty structure on missing file."""
+def _load(path: str, default=None):
+    """Load a JSON file, returning *default* on missing file."""
     if not os.path.isfile(path):
-        return [] if path.endswith("s.json") else {}
+        return default if default is not None else {}
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
@@ -413,7 +413,7 @@ function navigateTo(page){
   if(risky.length){
     topRisky.innerHTML = risky.map((r,i)=>{
       const name = companyMap[r.company_id]?esc(companyMap[r.company_id].name):esc(r.company_id);
-      return `<div class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-red-50 cursor-pointer" onclick="showCompanyDetail('${esc(r.company_id)}')">
+      return `<div class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-red-50 cursor-pointer" data-company="${esc(r.company_id)}">
         <div class="flex items-center gap-2">
           <span class="text-xs font-bold text-slate-400 w-5">${i+1}</span>
           <span class="text-sm font-medium text-slate-700">${name}</span>
@@ -427,6 +427,12 @@ function navigateTo(page){
   } else {
     topRisky.innerHTML='<p class="text-sm text-slate-400">No risky companies.</p>';
   }
+
+  // Event delegation for top-risky clicks
+  topRisky.addEventListener('click',e=>{
+    const el = e.target.closest('[data-company]');
+    if(el) showCompanyDetail(el.dataset.company);
+  });
 })();
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -454,7 +460,7 @@ function renderCompanyTable(){
   });
   const tbody = document.getElementById('companies-tbody');
   tbody.innerHTML = rows.map(r=>`
-    <tr onclick="showCompanyDetail('${esc(r.company_id)}')">
+    <tr data-company="${esc(r.company_id)}">
       <td class="font-medium text-slate-800">${esc(r.name)}</td>
       <td class="font-mono text-xs text-slate-500">${esc(r.company_id)}</td>
       <td><span class="font-bold ${r.score!=null?(r.score>=70?'text-emerald-600':r.score>=40?'text-amber-600':'text-red-600'):'text-slate-400'}">${fmtScore(r.score)}</span></td>
@@ -480,6 +486,11 @@ document.querySelectorAll('#companies-table thead th').forEach(th=>{
     else { sortKey=key; sortDir='asc'; }
     renderCompanyTable();
   });
+});
+// Event delegation for table row clicks
+document.getElementById('companies-tbody').addEventListener('click',e=>{
+  const tr = e.target.closest('tr[data-company]');
+  if(tr) showCompanyDetail(tr.dataset.company);
 });
 document.getElementById('company-search').addEventListener('input', renderCompanyTable);
 document.getElementById('risk-filter').addEventListener('change', renderCompanyTable);
@@ -838,10 +849,16 @@ function initNetwork(){
     </div>`;
 
     if(isCompany){
-      html += `<button onclick="showCompanyDetail('${esc(nid)}')" class="w-full text-center text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg py-2 transition-colors">View Full Detail →</button>`;
+      html += `<button data-company="${esc(nid)}" class="net-detail-btn w-full text-center text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg py-2 transition-colors">View Full Detail →</button>`;
     }
 
     content.innerHTML = html;
+
+    // Bind the detail button via event listener
+    const detailBtn = content.querySelector('.net-detail-btn');
+    if(detailBtn){
+      detailBtn.addEventListener('click',()=>showCompanyDetail(detailBtn.dataset.company));
+    }
   });
 
   // Filter listeners
@@ -864,13 +881,13 @@ function netTogglePhysics(){
 
 def visualize(output_html: str = OUTPUT_HTML) -> None:
     """Load all analysis JSON files and produce a multi-page SPA dashboard."""
-    graph = _load(GRAPH_JSON)
-    scores = _load(SCORES_JSON)
-    portfolio = _load(PORTFOLIO_JSON)
-    decisions = _load(DECISIONS_JSON)
-    monthly = _load(MONTHLY_JSON)
-    cash_flow = _load(CASHFLOW_JSON)
-    companies = _load(COMPANIES_JSON)
+    graph = _load(GRAPH_JSON, default={"nodes": [], "edges": [], "metrics": {}})
+    scores = _load(SCORES_JSON, default=[])
+    portfolio = _load(PORTFOLIO_JSON, default={})
+    decisions = _load(DECISIONS_JSON, default=[])
+    monthly = _load(MONTHLY_JSON, default={})
+    cash_flow = _load(CASHFLOW_JSON, default={})
+    companies = _load(COMPANIES_JSON, default=[])
 
     os.makedirs(os.path.dirname(output_html), exist_ok=True)
     html = _build_html(graph, scores, portfolio, decisions, monthly,
