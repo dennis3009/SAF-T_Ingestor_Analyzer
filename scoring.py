@@ -1,5 +1,5 @@
 """
-scoring.py - Behavioral risk scoring for SAF-T companies.
+scoring.py - Enhanced behavioral risk scoring for SAF-T companies.
 
 For each company, computes a score from 0 to 100 (100 = fully healthy).
 Penalties are applied for:
@@ -7,6 +7,8 @@ Penalties are applied for:
   2. Customer concentration (top customer > 50 % of total sales)
   3. Revenue spikes (month-over-month growth > 100 %)
   4. Transaction irregularity (uneven distribution across months)
+  5. Trend deterioration (revenue declining for 3+ months)
+  6. Dependency increase over time (growing partner concentration)
 
 Output: data/json/scores.json
 """
@@ -19,6 +21,9 @@ from collections import defaultdict
 
 TRANSACTIONS_CSV = os.path.join(
     os.path.dirname(__file__), "data", "csv", "transactions.csv"
+)
+MONTHLY_METRICS_JSON = os.path.join(
+    os.path.dirname(__file__), "data", "json", "monthly_metrics.json"
 )
 SCORES_JSON = os.path.join(
     os.path.dirname(__file__), "data", "json", "scores.json"
@@ -68,16 +73,27 @@ def _risk_level(score: float) -> str:
     return "Risky"
 
 
+def _load_monthly_metrics(path: str) -> dict:
+    """Load monthly metrics and return as company_id -> metrics dict."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {m["company_id"]: m for m in data}
+
+
 def score_companies(
     csv_path: str = TRANSACTIONS_CSV,
+    metrics_path: str = MONTHLY_METRICS_JSON,
     output_path: str = SCORES_JSON,
 ) -> list:
     """
     Compute behavioral risk scores for all companies.
 
-    Returns a list of score dicts.
+    Returns a list of score dicts with trend and explanation.
     """
     transactions = _load_transactions(csv_path)
+    metrics_map = _load_monthly_metrics(metrics_path)
 
     # Group transactions by company
     by_company: dict = defaultdict(list)
@@ -90,6 +106,10 @@ def score_companies(
         score = 100.0
         reasons = []
 
+        # Get trend from time series if available
+        company_metrics = metrics_map.get(company_id, {})
+        trend = company_metrics.get("trend", "stable")
+
         # Only sales count toward revenue metrics
         sales = [t for t in txs if t["type"] == "sale"]
         if not sales:
@@ -98,6 +118,7 @@ def score_companies(
                     "company_id": company_id,
                     "score": 50.0,
                     "risk_level": "Watch",
+                    "trend": trend,
                     "explanation": ["No sales transactions found"],
                 }
             )
@@ -180,6 +201,43 @@ def score_companies(
                     f"Irregular transaction timing (CV={tx_cv:.2f}): -{penalty} pts"
                 )
 
+        # 5. Trend deterioration (NEW)
+        if trend == "deteriorating":
+            penalty = 15
+            score -= penalty
+            reasons.append(
+                f"Revenue trend deteriorating (3+ months declining): -{penalty} pts"
+            )
+
+        # 6. Dependency increase over time (NEW)
+        # Check if partner concentration is increasing in recent months
+        if months_active >= 4:
+            half = months_active // 2
+            first_half_months = sorted_months[:half]
+            second_half_months = sorted_months[half:]
+
+            # Compute concentration for each half
+            def _half_concentration(month_list):
+                partner_rev = defaultdict(float)
+                total = 0
+                for t in sales:
+                    if t["date"][:7] in month_list:
+                        partner_rev[t["partner_id"]] += t["amount"]
+                        total += t["amount"]
+                if total > 0 and partner_rev:
+                    return max(partner_rev.values()) / total
+                return 0
+
+            conc_first = _half_concentration(first_half_months)
+            conc_second = _half_concentration(second_half_months)
+            if conc_second > conc_first + 0.15:
+                penalty = 10
+                score -= penalty
+                reasons.append(
+                    f"Customer dependency increasing over time "
+                    f"({conc_first:.0%} → {conc_second:.0%}): -{penalty} pts"
+                )
+
         score = max(0.0, round(score, 1))
         if not reasons:
             reasons.append("No significant risk indicators detected")
@@ -189,6 +247,7 @@ def score_companies(
                 "company_id": company_id,
                 "score": score,
                 "risk_level": _risk_level(score),
+                "trend": trend,
                 "explanation": reasons,
             }
         )
