@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import csv
+import io
 import shutil
 import zipfile
 import threading
@@ -160,15 +161,59 @@ def index():
 
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
-    """Generate synthetic SAF-T XML data."""
+    """Generate SAF-T XML data for a period and return a downloadable ZIP."""
+    with _pipeline_lock:
+        try:
+            data = request.get_json(silent=True) or {}
+            year = int(data.get("year", 2025))
+            mode = data.get("mode", "month")  # "month" or "year"
+            month = int(data.get("month", 1)) if mode == "month" else None
+
+            # Validate inputs
+            if year < 2000 or year > 2100:
+                return jsonify({"ok": False, "message": "Year must be between 2000 and 2100."}), 400
+            if month is not None and (month < 1 or month > 12):
+                return jsonify({"ok": False, "message": "Month must be between 1 and 12."}), 400
+
+            # Generate XML files in-memory
+            files = generator.generate_for_period(year=year, month=month)
+
+            # Build ZIP in-memory
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for filename, xml_content in sorted(files.items()):
+                    zf.writestr(filename, xml_content)
+            buf.seek(0)
+
+            # Build a descriptive download name
+            if month:
+                zip_name = f"saft_data_{year}_{month:02d}.zip"
+            else:
+                zip_name = f"saft_data_{year}_full_year.zip"
+
+            return send_file(
+                buf,
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name=zip_name,
+            )
+
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"ok": False, "message": str(exc)}), 500
+
+
+@app.route("/api/clean", methods=["POST"])
+def api_clean():
+    """Clear all generated/imported data."""
     with _pipeline_lock:
         try:
             _clear_data_dirs()
-            companies = generator.generate()
             return jsonify({
                 "ok": True,
-                "message": f"Generated {len(companies)} SAF-T XML files.",
-                "xml_count": _count_xml_files(),
+                "message": "All data cleared.",
+                "xml_count": 0,
             })
         except Exception as exc:
             return jsonify({"ok": False, "message": str(exc)}), 500
@@ -189,8 +234,8 @@ def api_upload():
             if not uploaded.filename.lower().endswith(".zip"):
                 return jsonify({"ok": False, "message": "Please upload a .zip file."}), 400
 
-            # Clear existing data
-            _clear_data_dirs()
+            # Ensure raw_xml dir exists (don't clear — user may import multiple ZIPs)
+            os.makedirs(RAW_XML_DIR, exist_ok=True)
 
             # Extract XML files from ZIP
             extracted = 0
@@ -218,7 +263,7 @@ def api_upload():
             return jsonify({
                 "ok": True,
                 "message": f"Imported {extracted} XML file(s).",
-                "xml_count": extracted,
+                "xml_count": _count_xml_files(),
             })
 
         except zipfile.BadZipFile:

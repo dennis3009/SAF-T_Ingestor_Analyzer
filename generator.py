@@ -541,5 +541,169 @@ def generate(output_dir: str = DATA_DIR, seed: int = RANDOM_SEED) -> list:
     return companies
 
 
+def _generate_transactions_for_month(
+    company_id: str,
+    partner_ids: list,
+    year: int,
+    month: int,
+    pattern: str = "normal",
+) -> list:
+    """
+    Generate transactions for a single specific month.
+    """
+    transactions = []
+    tx_counter = 0
+    month_start = date(year, month, 1)
+    if month == 12:
+        month_end = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        month_end = date(year, month + 1, 1) - timedelta(days=1)
+
+    if pattern == "normal":
+        base_sales = random.randint(5, 15)
+        base_purchases = random.randint(3, 10)
+        sale_amount_range = (5_000, 50_000)
+        purchase_amount_range = (2_000, 30_000)
+    elif pattern == "risky":
+        base_sales = random.randint(2, 20)
+        base_purchases = random.randint(2, 8)
+        spike = random.random() < 0.25
+        sale_amount_range = (50_000, 500_000) if spike else (5_000, 40_000)
+        purchase_amount_range = (3_000, 25_000)
+    else:  # fraud
+        base_sales = random.randint(3, 12)
+        base_purchases = random.randint(3, 12)
+        sale_amount_range = (20_000, 200_000)
+        purchase_amount_range = (20_000, 200_000)
+
+    for _ in range(base_sales):
+        if pattern == "risky" and random.random() < 0.6:
+            partner = partner_ids[0]
+        else:
+            partner = random.choice(partner_ids)
+        tx_date = _random_date(month_start, month_end)
+        amount = round(random.uniform(*sale_amount_range), 2)
+        tx_counter += 1
+        transactions.append({
+            "transaction_id": f"{company_id}_TX{tx_counter:05d}",
+            "company_id": company_id,
+            "partner_id": partner,
+            "amount": amount,
+            "date": tx_date.isoformat(),
+            "type": "sale",
+        })
+
+    for _ in range(base_purchases):
+        partner = random.choice(partner_ids)
+        tx_date = _random_date(month_start, month_end)
+        amount = round(random.uniform(*purchase_amount_range), 2)
+        tx_counter += 1
+        transactions.append({
+            "transaction_id": f"{company_id}_TX{tx_counter:05d}",
+            "company_id": company_id,
+            "partner_id": partner,
+            "amount": amount,
+            "date": tx_date.isoformat(),
+            "type": "purchase",
+        })
+
+    return transactions
+
+
+def generate_for_period(
+    year: int,
+    month: int | None = None,
+    seed: int = RANDOM_SEED,
+) -> dict:
+    """
+    Generate SAF-T XML content for 30 companies for a given period.
+
+    Args:
+        year:  The reporting year.
+        month: 1-12 for a single month, or None for the full year (12 months).
+        seed:  Random seed (combined with year+month for variety).
+
+    Returns:
+        dict mapping filename (str) -> XML content (str).
+        For a single month: { "COMP0001_2025_03.xml": "...", ... }
+        For a full year:    { "COMP0001_2025_01.xml": "...", ...,
+                              "COMP0001_2025_12.xml": "...", ... }
+    """
+    # Combine seed with period so different months yield different data
+    effective_seed = seed + year * 100 + (month or 0)
+    random.seed(effective_seed)
+
+    months_to_generate = [month] if month else list(range(1, 13))
+
+    # --- Build company list (same 30 companies every time) ---
+    random.seed(seed)  # company identities are stable across periods
+    companies = []
+    for i in range(NUM_COMPANIES):
+        cid = f"COMP{i + 1:04d}"
+        name = (
+            random.choice(FIRST_NAMES) + " "
+            + random.choice(INDUSTRIES) + " "
+            + random.choice(COMPANY_SUFFIXES)
+        )
+        pattern = "normal"
+        if i in range(20, 26):
+            pattern = "risky"
+        elif i in range(26, 30):
+            pattern = "fraud"
+        companies.append({
+            "id": cid, "name": name,
+            "tax_id": _make_tax_id(i), "pattern": pattern,
+        })
+
+    company_ids = {c["id"] for c in companies}
+    all_partners = _generate_partners(80, exclude_ids=company_ids)
+
+    fraud_ring_ids = [companies[26]["id"], companies[27]["id"],
+                      companies[28]["id"], companies[29]["id"]]
+
+    # Reset to period-specific seed for transaction variety
+    random.seed(effective_seed)
+
+    files: dict = {}
+
+    for company in companies:
+        cid = company["id"]
+        pattern = company["pattern"]
+
+        if pattern == "normal":
+            partner_subset = random.sample(all_partners, k=random.randint(8, 20))
+        elif pattern == "risky":
+            partner_subset = random.sample(all_partners, k=random.randint(2, 5))
+        else:
+            ring_partners_as_objects = []
+            for rid in fraud_ring_ids:
+                if rid != cid:
+                    ring_comp = next(c for c in companies if c["id"] == rid)
+                    ring_partners_as_objects.append({
+                        "id": rid, "name": ring_comp["name"],
+                        "tax_id": ring_comp["tax_id"],
+                    })
+            external = random.sample(all_partners, k=random.randint(1, 3))
+            partner_subset = ring_partners_as_objects + external
+
+        partner_ids_for_company = [p["id"] for p in partner_subset]
+
+        for m in months_to_generate:
+            transactions = _generate_transactions_for_month(
+                company_id=cid,
+                partner_ids=partner_ids_for_company,
+                year=year,
+                month=m,
+                pattern=pattern,
+            )
+            xml_str = _build_xml(company, partner_subset, transactions)
+            filename = f"{cid}_{year}_{m:02d}.xml"
+            files[filename] = xml_str
+
+    print(f"[generator] Generated {len(files)} XML file(s) in-memory for "
+          f"{'month ' + str(month) if month else 'full year'} {year}")
+    return files
+
+
 if __name__ == "__main__":
     generate()
